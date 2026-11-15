@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
@@ -206,12 +207,12 @@ class MainActivity : Activity() {
         }
         val cols = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         regionAdapter = RowAdapter(
-            label = { it.name.removePrefix("● ").removePrefix("🔍 ") }, glyph = { when (it.id) { Repo.LIVE -> "live"; Repo.SEARCH -> "find"; else -> null } },
+            label = { if (it.id == Repo.FAV) "Favs" else it.name.removePrefix("● ").removePrefix("🔍 ") }, glyph = { when (it.id) { Repo.LIVE -> "live"; Repo.SEARCH -> "find"; Repo.FAV -> "star"; else -> null } },
             sub = { if (it.id == Repo.SEARCH) (if (repo.searchRes.isEmpty()) "" else repo.searchRes.size.toString()) else if (it.id == Repo.LIVE || it.id == Repo.FAV) it.channels.toString() else it.groups.toString() },
             onClick = { onRegionClick(it) }, onLong = { startMove(it, true) }, onFocus = { onRegionFocus(it) })
         regionRv = rv(regionAdapter)
         groupAdapter = RowAdapter(
-            label = { repo.shortName(it) }, sub = { it.count.toString() },
+            label = { repo.shortName(it).removePrefix("★ ") }, glyph = { if (it.id == Repo.FAV) "star" else null }, sub = { it.count.toString() },
             onClick = { onGroupClick(it) }, onLong = { startMove(it) }, onFocus = { onGroupFocus(it) })
         chanAdapter = RowAdapter(
             label = { it.name }, sub = { it.num.toString() }, fav = { repo.isFav(it.id) },
@@ -228,7 +229,13 @@ class MainActivity : Activity() {
         head.addView(OrbView(this).apply { energy = 0.2f }, LinearLayout.LayoutParams(dp(48), dp(48)))
         head.addView(TextView(this).apply { text = "Live TV"; setTextColor(Neon.TEXT); textSize = 26f; typeface = Typeface.create("sans-serif-light", Typeface.NORMAL); setPadding(dp(14), 0, 0, 0) })
         overlay.addView(head, LinearLayout.LayoutParams(-1, -2))
-        overlay.addView(cols, LinearLayout.LayoutParams(-1, 0, 1f))
+        val colsBox = FrameLayout(this)
+        colsBox.addView(cols, FrameLayout.LayoutParams(-1, -1))
+        colsBox.addView(View(this).apply {
+            isClickable = false; isFocusable = false
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.TRANSPARENT, Color.parseColor("#F004060F")))
+        }, FrameLayout.LayoutParams(-1, dp(40), Gravity.BOTTOM))
+        overlay.addView(colsBox, LinearLayout.LayoutParams(-1, 0, 1f))
         detailPanel = InfoPanel(this)
         overlay.addView(detailPanel, LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(6), 0, dp(6)) })
         hint = TextView(this).apply {
@@ -263,8 +270,13 @@ class MainActivity : Activity() {
     }
 
     private fun setHint(moving: Boolean = false) {
-        hint.text = if (moving) "MOVING GROUP   ▲▼ move   ◀ top   ▶ bottom   OK save   BACK cancel"
+        val s = if (moving) "MOVING GROUP   ▲▼ move   ◀ top   ▶ bottom   OK save   BACK cancel"
         else "OK open  ·  hold OK: favourite / move  ·  PLAY: check live  ·  BACK close"
+        val sp = android.text.SpannableString(s)
+        for (k in listOf("OK", "PLAY", "BACK")) { var i = s.indexOf(k)
+            while (i >= 0) { sp.setSpan(android.text.style.ForegroundColorSpan(Neon.CYAN), i, i + k.length, 0)
+                sp.setSpan(android.text.style.StyleSpan(Typeface.BOLD), i, i + k.length, 0); i = s.indexOf(k, i + k.length) } }
+        hint.text = sp
     }
 
     // ---------------------------------------------------------------- setup (first run)
@@ -653,8 +665,8 @@ class MainActivity : Activity() {
     private fun promptSearch() {
         val dlg = android.app.Dialog(this, android.R.style.Theme_Material_NoActionBar_Fullscreen)
         val et = EditText(this).apply {
-            setSingleLine(); hint = "channel name"; setText(repo.searchQ); setSelectAllOnFocus(true); textSize = 26f
-            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH; setTextColor(Neon.TEXT); setHintTextColor(Neon.MUTED)
+            setSingleLine(); hint = "channel name   ·   press OK to type"; setText(repo.searchQ); setSelectAllOnFocus(true); textSize = 26f
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH; setTextColor(Neon.TEXT); setHintTextColor(Color.parseColor("#A9B6E0"))
             setPadding(dp(24), dp(16), dp(24), dp(16))
             fun frame(f: Boolean) = GradientDrawable().apply { setColor(Color.parseColor(if (f) "#172863" else "#0F1A42")); cornerRadius = dp(18).toFloat(); if (f) setStroke(dp(3), Neon.YELLOW) else setStroke(dp(1), Neon.withAlpha(Neon.BLUE, 130)) }
             background = frame(false)
@@ -667,7 +679,7 @@ class MainActivity : Activity() {
         head.addView(TextView(this).apply { text = "Search channels"; setTextColor(Neon.TEXT); textSize = 30f; typeface = Typeface.create("sans-serif-light", Typeface.NORMAL); setPadding(dp(14), 0, 0, 0) })
         col.addView(head); col.addView(et, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(18) })
         col.addView(go, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
-        col.addView(TextView(this).apply { text = "BACK  to cancel"; setTextColor(Neon.MUTED); textSize = 15f; setPadding(0, dp(8), 0, 0) })
+        col.addView(Neon.keyHint(this, "BACK", "to cancel"))
         val frame = FrameLayout(this).apply { background = Neon.Backdrop(); addView(col, FrameLayout.LayoutParams(dp(640), -2, Gravity.CENTER)) }
         dlg.setContentView(frame)
         et.setOnEditorActionListener { _, _, _ -> dlg.dismiss(); doSearch(et.text.toString()); true }
@@ -1154,6 +1166,13 @@ class GlyphDrawable(private val kind: String, private val size: Int) : android.g
     override fun getIntrinsicHeight() = size
     override fun draw(c: Canvas) {
         val s = size.toFloat(); p.strokeWidth = s * 0.11f
+        if (kind == "star") {
+            p.style = Paint.Style.FILL; p.color = Color.parseColor("#FFD60A")
+            val path = Path(); val cx = s / 2; val cy = s * 0.53f; val ro = s * 0.46f; val ri = ro * 0.42f
+            for (i in 0 until 10) { val r = if (i % 2 == 0) ro else ri; val a = Math.PI * i / 5 - Math.PI / 2
+                val x = (cx + r * Math.cos(a)).toFloat(); val y = (cy + r * Math.sin(a)).toFloat(); if (i == 0) path.moveTo(x, y) else path.lineTo(x, y) }
+            path.close(); c.drawPath(path, p); return
+        }
         if (kind == "live") {
             p.style = Paint.Style.STROKE; c.drawCircle(s / 2, s / 2, s * 0.40f, p)
             p.style = Paint.Style.FILL; c.drawCircle(s / 2, s / 2, s * 0.17f, p)

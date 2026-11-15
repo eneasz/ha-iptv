@@ -25,6 +25,18 @@ import kotlin.math.sin
 
 /** Colour system: deep navy ground, electric blue structure, neon yellow = focus (and the orb's highlight). */
 object Neon {
+    /** "[ BACK ] to cancel" – outlined key chip followed by a muted label. */
+    fun keyHint(ctx: Context, key: String, label: String): View {
+        val d = ctx.resources.displayMetrics.density
+        val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, (12 * d).toInt(), 0, 0) }
+        row.addView(TextView(ctx).apply {
+            text = key; setTextColor(TEXT); textSize = 13f; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); letterSpacing = 0.1f
+            setPadding((12 * d).toInt(), (4 * d).toInt(), (12 * d).toInt(), (4 * d).toInt())
+            background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 8 * d; setStroke((1.5f * d).toInt(), withAlpha(CYAN, 200)); setColor(withAlpha(BLUE, 40)) }
+        })
+        row.addView(TextView(ctx).apply { text = label; setTextColor(MUTED); textSize = 15f; setPadding((10 * d).toInt(), 0, 0, 0) })
+        return row
+    }
     val BG0 = Color.parseColor("#04060F")
     val BG1 = Color.parseColor("#0B1330")
     val BLUE = Color.parseColor("#2563FF")
@@ -232,7 +244,7 @@ class TileView(ctx: Context, val kind: String, val label: String, var sub: Strin
             val pw = 58 * d; val ph = 26 * d
             val pr = RectF(card.right - pw - 14 * d, card.top + 14 * d, card.right - 14 * d, card.top + 14 * d + ph)
             fill.shader = null; fill.color = Neon.withAlpha(Neon.YELLOW, 36); c.drawRoundRect(pr, ph / 2, ph / 2, fill)
-            txt.textSize = 13f * d; txt.color = Neon.YELLOW; txt.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            txt.textSize = 13f * d; txt.color = Color.parseColor("#B8C4E8"); txt.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             c.drawText("SOON", pr.centerX(), pr.centerY() + 4.5f * d, txt)
         }
     }
@@ -385,7 +397,7 @@ class HomeView(ctx: Context, val onLive: () -> Unit, val onResume: () -> Unit, v
     private fun updateClock() {
         val c = java.util.Calendar.getInstance()
         val s = String.format("%02d:%02d", c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE))
-        clock.text = SpannableString(s).apply { setSpan(ForegroundColorSpan(Neon.YELLOW), 2, 3, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }   // yellow only on the colon
+        clock.text = SpannableString(s).apply { setSpan(ForegroundColorSpan(Neon.TEXT), 2, 3, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }
         date.text = java.text.SimpleDateFormat("EEEE d MMMM", java.util.Locale.getDefault()).format(c.time)
     }
     override fun onAttachedToWindow() { super.onAttachedToWindow(); post(tick) }
@@ -412,7 +424,7 @@ class SettingsPanel(ctx: Context, rows: List<NeonRow>, val onClose: () -> Unit) 
         head.addView(TextView(ctx).apply { text = "Settings"; setTextColor(Neon.TEXT); textSize = 30f; typeface = Typeface.create("sans-serif-light", Typeface.NORMAL); setPadding((14 * d).toInt(), 0, 0, 0) })
         col.addView(head)
         rows.forEach { col.addView(it, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = (10 * d).toInt() }) }
-        col.addView(TextView(ctx).apply { text = "BACK  to return"; setTextColor(Neon.MUTED); textSize = 15f; setPadding(0, (8 * d).toInt(), 0, 0) })
+        col.addView(Neon.keyHint(ctx, "BACK", "to return"))
         addView(col, LayoutParams((640 * d).toInt(), -2, Gravity.CENTER))
         rows.firstOrNull()?.let { post { it.requestFocus() } }
     }
