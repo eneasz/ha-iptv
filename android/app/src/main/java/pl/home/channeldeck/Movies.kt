@@ -248,7 +248,7 @@ class VodRepo(ctx: Context, private val prefs: Prefs) {
             val o = JSONObject(txt).optJSONObject("info") ?: return@withContext null
             fun s(k: String) = if (o.isNull(k)) "" else o.optString(k, "").trim()
             val dur = s("duration").ifEmpty { o.optInt("duration_secs", 0).let { if (it > 0) "${it / 3600}h ${it % 3600 / 60}m" else "" } }
-            return@withContext VodInfo(s("plot").ifEmpty { s("description") }, s("genre"), dur, s("cast").ifEmpty { s("actors") }.split(',').map { it.trim() }.filter { it.isNotEmpty() }.take(4).joinToString(", "), s("director")).also { infoCache[m.id] = it }
+            return@withContext VodInfo(s("plot").ifEmpty { s("description") }, s("genre"), dur, s("cast").ifEmpty { s("actors") }.split(',').map { it.trim() }.filter { it.isNotEmpty() }.take(3).joinToString(", "), s("director")).also { infoCache[m.id] = it }
         } catch (e: Exception) { }
         null
     }
@@ -532,6 +532,7 @@ class DetailPanel(ctx: Context, val m: Movie, vod: VodRepo, cb: MoviesView.Cb, p
     private val primary: NeonRow
     init {
         background = Neon.Backdrop(); isClickable = true
+        if (m.poster.isNotEmpty()) addView(ImageView(ctx).apply { scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0.22f; load(m.poster) { size(24, 36) } }, LayoutParams(-1, -1))   // tiny image upscaled = free blur
         val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
         val pw = dp(210); val ph = dp(315)
         val poster = ImageView(ctx).apply {
@@ -546,7 +547,7 @@ class DetailPanel(ctx: Context, val m: Movie, vod: VodRepo, cb: MoviesView.Cb, p
         col.addView(TextView(ctx).apply { text = m.title; setTextColor(Neon.TEXT); textSize = 30f; typeface = Typeface.create("sans-serif-light", Typeface.NORMAL); maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END })
         facts.apply { setTextColor(Neon.CYAN); textSize = 15f; setPadding(0, dp(6), 0, 0); typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL) }
         genre.apply { setTextColor(Neon.MUTED); textSize = 14f; setPadding(0, dp(2), 0, 0); visibility = GONE }
-        plot.apply { setTextColor(Neon.TEXT); alpha = 0.85f; textSize = 15f; maxLines = 5; ellipsize = android.text.TextUtils.TruncateAt.END; setLineSpacing(0f, 1.12f); setPadding(0, dp(12), 0, 0); text = "Loading…" }
+        plot.apply { setTextColor(Neon.TEXT); alpha = 0.85f; textSize = 15f; maxLines = 4; ellipsize = android.text.TextUtils.TruncateAt.END; setLineSpacing(0f, 1.12f); setPadding(0, dp(12), 0, 0); text = "Loading…" }
         people.apply { setTextColor(Neon.MUTED); textSize = 13f; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(10), 0, 0); visibility = GONE }
         col.addView(facts); col.addView(genre); col.addView(plot); col.addView(people)
         col.addView(View(ctx), LinearLayout.LayoutParams(1, dp(14)))
@@ -564,17 +565,17 @@ class DetailPanel(ctx: Context, val m: Movie, vod: VodRepo, cb: MoviesView.Cb, p
         col.minimumHeight = ph
         row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
         addView(row, LayoutParams(-1, -2, Gravity.CENTER).apply { setMargins(dp(72), 0, dp(72), 0) })
-        facts.text = listOfNotNull(m.year.ifEmpty { null }, if (m.rating > 0.1f) "★ " + String.format("%.1f", m.rating) else null, if (m.is4k) "4K" else null, m.ext.uppercase()).joinToString("   ·   ")
+        facts.text = listOfNotNull(m.year.ifEmpty { null }, if (m.rating > 0.1f) "★ " + String.format("%.1f", m.rating) else null, if (m.is4k) "4K" else null).joinToString("   ·   ")
     }
     fun focusPrimary() { primary.post { primary.requestFocus() } }
     fun bindInfo(i: VodInfo?) {
         if (i == null) { plot.text = "Details are unavailable right now."; return }
         plot.text = i.plot.takeIf { it.isNotEmpty() } ?: "No description from the provider."
         val dur = Regex("^(\\d+):(\\d{2}):(\\d{2})$").find(i.duration)?.let { (if (it.groupValues[1].toInt() > 0) "${it.groupValues[1].toInt()} h " else "") + "${it.groupValues[2]} min" } ?: i.duration
-        val f = listOfNotNull(m.year.ifEmpty { null }, dur.ifEmpty { null }, if (m.rating > 0.1f) "★ " + String.format("%.1f", m.rating) else null, if (m.is4k) "4K" else null, m.ext.uppercase())
+        val f = listOfNotNull(m.year.ifEmpty { null }, dur.ifEmpty { null }, if (m.rating > 0.1f) "★ " + String.format("%.1f", m.rating) else null, if (m.is4k) "4K" else null)
         facts.text = f.joinToString("   ·   ")
         if (i.genre.isNotEmpty()) { genre.text = i.genre; genre.visibility = VISIBLE }
-        val p = listOfNotNull(i.director.takeIf { it.isNotEmpty() }?.let { "Director  $it" }, i.cast.takeIf { it.isNotEmpty() }?.let { "Cast  $it" }).joinToString("\n")
+        val p = listOfNotNull(i.director.takeIf { it.isNotEmpty() }?.let { "Director  $it" }, i.cast.takeIf { it.isNotEmpty() }?.let { "Cast  $it" }, "File  ${m.ext.uppercase()}").joinToString("\n")
         if (p.isNotEmpty()) { people.text = p; people.visibility = VISIBLE }
     }
 }
@@ -584,6 +585,7 @@ class VodBar(ctx: Context) : FrameLayout(ctx) {
     private val d = ctx.resources.displayMetrics.density
     private val title = TextView(ctx); private val time = TextView(ctx); private val hint = TextView(ctx)
     private var frac = 0f; private var paused = false
+    var note = ""
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val track = View(ctx)
     init {
@@ -602,7 +604,7 @@ class VodBar(ctx: Context) : FrameLayout(ctx) {
     fun update(name: String, pos: Long, dur: Long, paused: Boolean) {
         title.text = name; this.paused = paused
         frac = if (dur > 0) (pos.toFloat() / dur).coerceIn(0f, 1f) else 0f
-        time.text = (if (paused) "❚❚  " else "▶  ") + fmtTime(pos) + (if (dur > 0) "  /  " + fmtTime(dur) else "")
+        time.text = (if (paused) "❚❚  " else "▶  ") + fmtTime(pos) + (if (dur > 0) "  /  " + fmtTime(dur) + "     " + fmtTime(dur - pos) + " left" else "") + (if (note.isNotEmpty()) "          $note" else "")
         track.invalidate(); invalidate()
     }
     override fun dispatchDraw(c: Canvas) {

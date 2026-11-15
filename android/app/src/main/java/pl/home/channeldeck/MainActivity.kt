@@ -371,6 +371,7 @@ class MainActivity : Activity() {
             val start = last ?: repo.channels(gid).firstOrNull()
             showChannels(gid); playCtx = gid
             scope.launch(Dispatchers.Default) { repo.warm() }
+            scope.launch { kotlinx.coroutines.delay(4000); if (!vod.ready && vod.loadCache() && home.visibility == View.VISIBLE) { home.movies.sub = String.format("%,d films", vod.total); home.movies.invalidate() } }
             val pc = pendingCmd; pendingCmd = null
             if (pc != null) { dismissSplash(); runCommand(pc) }      // a command from HA plays straight away
             else { val wait = (1900 - (android.os.SystemClock.uptimeMillis() - splashAt)).coerceAtLeast(0); scope.launch { kotlinx.coroutines.delay(wait); if (playing == null) showHome() else dismissSplash() } }
@@ -639,6 +640,7 @@ class MainActivity : Activity() {
         player?.pause()
         val c = playing ?: repo.channel(prefs.lastChannel)
         home.setResume(c?.name, c?.let { groupName(it) }, c?.icon)
+        if (vod.ready) { home.movies.sub = String.format("%,d films", vod.total); home.movies.invalidate() }
         home.live.sub = if (dataReady) "${repo.groups.count { !Repo.pseudo(it.id) }} groups" else ""
         home.visibility = View.VISIBLE; home.alpha = 0f; home.animate().alpha(1f).setDuration(320).start()
         dismissSplash(); banner.bringToFront(); home.focusDefault(); changed()
@@ -830,12 +832,15 @@ class MainActivity : Activity() {
         vodBarJob?.cancel()
         vodBarJob = scope.launch { kotlinx.coroutines.delay(if (keep) 5000 else 4000); if (player?.isPlaying == true) vodBar.visibility = View.GONE else vodBarJob = null }
     }
+    private val clearNote = Runnable { vodBar.note = ""; player?.let { p -> vodPlaying?.let { vodBar.update(it.title, p.currentPosition, p.duration, !p.isPlaying) } } }
     private fun vodKey(e: KeyEvent): Boolean {
         if (e.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(e)
         val p = player ?: return super.dispatchKeyEvent(e)
         fun seek(ms: Long) {
             val dur = if (p.duration > 0) p.duration else Long.MAX_VALUE / 4
-            p.seekTo((p.currentPosition + ms).coerceIn(0L, (dur - 2000).coerceAtLeast(0L))); showVodBar()
+            p.seekTo((p.currentPosition + ms).coerceIn(0L, (dur - 2000).coerceAtLeast(0L)))
+            val a = Math.abs(ms) / 1000; vodBar.note = (if (ms > 0) "+" else "−") + (if (a >= 120) "${a / 60} min" else if (a >= 60) "1 min" else "$a s")
+            vodBar.removeCallbacks(clearNote); vodBar.postDelayed(clearNote, 1200); showVodBar()
         }
         val accel = 1 + minOf(e.repeatCount / 3, 8)
         when (e.keyCode) {
