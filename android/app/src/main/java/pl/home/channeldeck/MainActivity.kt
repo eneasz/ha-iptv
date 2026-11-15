@@ -411,7 +411,11 @@ class MainActivity : Activity() {
     }
 
     // ---------------------------------------------------------------- playback
-    private fun ensurePlayer(): ExoPlayer = player ?: ExoPlayer.Builder(this, Mp2RenderersFactory(this)).build().also { pl ->
+    private fun ensurePlayer(): ExoPlayer = player ?: ExoPlayer.Builder(this, Mp2RenderersFactory(this))
+        // this stick has 1.7 GB: the default buffer (up to ~190 MB) gets a 4K stream killed by the low-memory killer
+        .setLoadControl(androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setBufferDurationsMs(20_000, 40_000, 2_500, 5_000).setTargetBufferBytes(48 * 1024 * 1024).setPrioritizeTimeOverSizeThresholds(false).build())
+        .build().also { pl ->
             player = pl; playerView.player = pl
             pl.addListener(object : Player.Listener {
                 override fun onPlayerError(error: PlaybackException) {
@@ -800,6 +804,8 @@ class MainActivity : Activity() {
         sampleJob?.cancel(); measureJob?.cancel(); epgJob?.cancel(); retryJob?.cancel(); surveyJob?.cancel()
         playing = null; stopped = false; vodRetries = 0
         moviesView.visibility = View.GONE; seriesView.visibility = View.GONE; overlay.visibility = View.GONE; infoPanel.visibility = View.GONE
+        // small-RAM sticks: hand the poster bitmaps back before a 4K decode starts
+        try { coil.Coil.imageLoader(this).memoryCache?.clear() } catch (e: Exception) {}
         startVod(m, resume)
         changed()
     }

@@ -187,7 +187,7 @@ open class VodRepo(ctx: Context, private val prefs: Prefs, protected val series:
     /** "EN - Black Adam  (2022)" -> ("Black Adam", "2022"); also strips "4K-NF - ", "TOP - ", "D+ - " style provider prefixes. */
     private fun cleanTitle(raw: String): Pair<String, String> {
         var t = Neon.plain(raw).replace(Regex("^(?:4K-)?[A-Za-z0-9+]{1,5}\\s+-\\s+"), "")
-        if (series) while (true) { val n = t.replace(Regex("\\s*\\([A-Za-z]{2,3}\\)\\s*$"), ""); if (n == t) break; t = n }     // trailing country tags: "(TW)"
+        if (series) while (true) { val n = t.replace(Regex("\\s*\\([A-Za-z ]{2,14}\\)\\s*$"), ""); if (n == t) break; t = n }     // trailing country tags: "(TW)"
         var year = ""
         Regex("\\((\\d{4})\\)\\s*$").find(t)?.let { year = it.groupValues[1]; t = t.substring(0, it.range.first) }
         return t.replace(Regex("\\s+"), " ").trim().ifEmpty { raw } to year

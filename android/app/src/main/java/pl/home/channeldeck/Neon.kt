@@ -91,6 +91,9 @@ class OrbView(ctx: Context) : View(ctx) {
     private var lastNs = 0L
     private val colors = intArrayOf(Neon.BLUE, Neon.CYAN, Color.parseColor("#3A8CFF"), Neon.YELLOW, Neon.YELLOW, Color.parseColor("#3A8CFF"), Neon.CYAN, Neon.BLUE)
     private var bornAt = 0L
+    // The rings are new stroked paths every frame; on the GPU each one becomes a cached mask texture and the cache grows to ~440 MB
+    // on a 1.7 GB stick (the low-memory killer then takes the app). A software layer rasterises on the CPU into ONE reusable texture.
+    init { setLayerType(LAYER_TYPE_SOFTWARE, null) }
 
     // radius factor, harmonic, wave speed, rotation (deg/s), stroke (dp), alpha
     private data class Ring(val r: Float, val k: Int, val ws: Float, val rot: Float, val w: Float, val a: Float)

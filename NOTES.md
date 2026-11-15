@@ -27,3 +27,15 @@ State: v0.3 pushed to github.com/eneasz/ha-iptv (main, latest 6625db7). APK: dis
 - Stick testing: ALWAYS guard every adb key on `dumpsys window | grep mCurrentFocus` containing pl.home.channeldeck (BACK on Home exits to the launcher). App resumes into playback; BACK = picture -> list -> Home.
 - Never `notifyDataSetChanged` on a focused RecyclerView. No provider details in the repo.
 - Icon/banner script was /tmp/claude-1000/mk.py (venv with pillow at /tmp/claude-1000/pilvenv); outputs are res/drawable-xhdpi/{banner,ic_launcher}.png.
+
+## Series (Xtream) – handover
+- `SeriesRepo` (Series.kt) extends `VodRepo(series = true)`: same list/category/search/cache code, different API actions (`get_series_categories`, `get_series`, `get_series_info`) and cache files (`series_*`). Episodes are `Movie(ep = true)`; their `cat` field holds the series id, URL is `/series/user/pass/id.ext`.
+- State in prefs `series`: `prog` (episode resume), `watched` (episode ids), `last` (series id -> last episode + time, drives Continue watching and the "Up next" focus).
+- `SeriesPanel`: season tabs + episode list; focus lands on the episode to continue. An episode that ends starts the next one (`vodFinished` -> `nextAfter`).
+- Verified on the stick: browse, Find, 3-season show, 4K H.265 episode, resume, auto-advance.
+
+## Memory lesson (Fire TV Stick 4K Max, 1.7 GB)
+- The low-memory killer ("low watermark is breached and thrashing") killed the app during 4K playback. Cause: GPU path-mask cache from the animated orb (stroked paths change every frame) grew to ~440 MB ("GL mtrack" in `dumpsys meminfo`).
+- Fix: `OrbView` uses `LAYER_TYPE_SOFTWARE` (GL mtrack 440 -> ~35 MB), ExoPlayer buffer capped at 48 MB (`DefaultLoadControl`), Coil memory cache cleared when playback starts.
+- Check with: `adb shell dumpsys meminfo pl.home.channeldeck | grep -E "GL mtrack|TOTAL PSS"`. A freshly booted stick is slow for ~15 min (load average 15-20); wait before testing.
+- adb: `screencap -p` via exec-out can return an empty file; use `screencap -p /sdcard/sc.png` + `adb pull`. In zsh don't name helpers `d`, `g`, `gl` (aliases).
