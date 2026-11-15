@@ -42,6 +42,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.Callable
@@ -95,6 +96,14 @@ class MainActivity : Activity() {
     private var moveSnapshot: List<Group> = emptyList()
     private var dataReady = false
     private lateinit var splash: SplashView
+    private lateinit var vod: VodRepo
+    private lateinit var moviesView: MoviesView
+    private lateinit var vodBar: VodBar
+    private var vodPlaying: Movie? = null
+    private var vodJob: Job? = null
+    private var vodBarJob: Job? = null
+    private var vodRetries = 0
+    private var vodLoading = false
     private lateinit var home: HomeView
     private var settingsPanel: SettingsPanel? = null
     private var splashAt = 0L
@@ -132,6 +141,7 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         prefs = Prefs(this)
         repo = Repo(prefs, filesDir)
+        vod = VodRepo(this, prefs)
         buildUi()
         applyIntentConfig(intent)
         apiServer = ApiServer(8765, apiHost).also { it.start() }
@@ -264,8 +274,17 @@ class MainActivity : Activity() {
         root.addView(overlay, FrameLayout.LayoutParams(-1, -1))
         setHint()
         home = HomeView(this, onLive = { openLive() }, onResume = { resumeFromHome() },
-            onSoon = { flashBanner("$it isn't available yet – HA IPTV does Live TV for now") }, onSettings = { openSettings() }).apply { visibility = View.GONE }
+            onMovies = { openMovies() }, onSoon = { flashBanner("$it isn't available yet – coming next") }, onSettings = { openSettings() }).apply { visibility = View.GONE }
         root.addView(home, FrameLayout.LayoutParams(-1, -1))
+        moviesView = MoviesView(this, vod, object : MoviesView.Cb {
+            override fun play(m: Movie, fromStart: Boolean) { playVod(m, fromStart) }
+            override fun search() { askText("Search movies", "movie title   ·   press OK to type", vod.searchQ, "Find films across all categories") { q -> searchMovies(q) } }
+            override fun close() { closeMovies() }
+            override fun loadInfo(m: Movie, done: (VodInfo?) -> Unit) { scope.launch { done(vod.info(m)) } }
+        }).apply { visibility = View.GONE }
+        root.addView(moviesView, FrameLayout.LayoutParams(-1, -1))
+        vodBar = VodBar(this).apply { visibility = View.GONE }
+        root.addView(vodBar, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         splash = SplashView(this); splashAt = android.os.SystemClock.uptimeMillis()
         root.addView(splash, FrameLayout.LayoutParams(-1, -1))
     }
@@ -385,20 +404,11 @@ class MainActivity : Activity() {
     }
 
     // ---------------------------------------------------------------- playback
-    private fun play(c: Channel, banner: Boolean = false, fmt: String = prefs.format, ctx: String? = null, retry: Boolean = false) {
-        playing = c; stopped = false; lastError = null
-        dismissSplash(); home.visibility = View.GONE; settingsPanel?.let { root.removeView(it); settingsPanel = null }
-        if (ctx != null) playCtx = ctx else if (playCtx.isEmpty() || !repo.inGroup(playCtx, c.id)) playCtx = c.groupId
-        tech = null; measuring = true; playEpg = null; playEpgLoading = c.epgId.isNotEmpty()
-        measureJob?.cancel(); epgJob?.cancel()
-        prefs.lastChannel = c.id; prefs.lastGroup = if (playCtx == Repo.SEARCH || playCtx == Repo.LIVE) c.groupId else playCtx
-        if (fmt == prefs.format && !retry) { triedAltFormat = false; netRetries = 0; retryJob?.cancel() }
-        if (!retry) recoveries = 0
-        sampleJob?.cancel(); if (picture != "ok") { picture = "ok"; changed() }
-        val p = player ?: ExoPlayer.Builder(this, Mp2RenderersFactory(this)).build().also { pl ->
+    private fun ensurePlayer(): ExoPlayer = player ?: ExoPlayer.Builder(this, Mp2RenderersFactory(this)).build().also { pl ->
             player = pl; playerView.player = pl
             pl.addListener(object : Player.Listener {
                 override fun onPlayerError(error: PlaybackException) {
+                    if (vodPlaying != null) { vodError(error); return }
                     val c2 = playing ?: return
                     // Network hiccups (provider allows 1 connection; a just-zapped stream may still be closing): retry with backoff first
                     if (error.errorCode in 2000..2999 && error.errorCode != PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND && netRetries < 4) {
@@ -417,6 +427,7 @@ class MainActivity : Activity() {
                 override fun onIsPlayingChanged(isPlaying: Boolean) { changed() }
                 override fun onPlaybackStateChanged(state: Int) {
                     changed()
+                    if (state == Player.STATE_ENDED && vodPlaying != null) { vodFinished(); return }
                     if (state == Player.STATE_READY) {
                         status.visibility = View.GONE
                         val cur = playing
@@ -424,7 +435,19 @@ class MainActivity : Activity() {
                     } else if (state == Player.STATE_BUFFERING) { status.visibility = View.VISIBLE; status.text = "…" }
                 }
             })
-        }
+    }
+
+    private fun play(c: Channel, banner: Boolean = false, fmt: String = prefs.format, ctx: String? = null, retry: Boolean = false) {
+        playing = c; stopped = false; lastError = null
+        dismissSplash(); home.visibility = View.GONE; settingsPanel?.let { root.removeView(it); settingsPanel = null }
+        if (ctx != null) playCtx = ctx else if (playCtx.isEmpty() || !repo.inGroup(playCtx, c.id)) playCtx = c.groupId
+        tech = null; measuring = true; playEpg = null; playEpgLoading = c.epgId.isNotEmpty()
+        measureJob?.cancel(); epgJob?.cancel()
+        prefs.lastChannel = c.id; prefs.lastGroup = if (playCtx == Repo.SEARCH || playCtx == Repo.LIVE) c.groupId else playCtx
+        if (fmt == prefs.format && !retry) { triedAltFormat = false; netRetries = 0; retryJob?.cancel() }
+        if (!retry) recoveries = 0
+        sampleJob?.cancel(); if (picture != "ok") { picture = "ok"; changed() }
+        val p = ensurePlayer()
         p.setMediaItem(MediaItem.fromUri(repo.streamUrl(c, fmt))); p.prepare(); p.playWhenReady = true
         chanAdapter.activeIdx = repo.channels(browseGroup).indexOfFirst { it.id == c.id }
         chanAdapter.notifyDataSetChanged()
@@ -679,30 +702,157 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun promptSearch() {
+    private fun promptSearch() = askText("Search channels", "channel name   ·   press OK to type", repo.searchQ, "Find channels across all groups", onCancel = { resetHide() }) { doSearch(it) }
+
+    /** Full-screen neon text prompt (used by channel and movie search). */
+    private fun askText(title: String, hintText: String, initial: String, sub: String, onCancel: () -> Unit = {}, onSubmit: (String) -> Unit) {
         val dlg = android.app.Dialog(this, android.R.style.Theme_Material_NoActionBar_Fullscreen)
         val et = EditText(this).apply {
-            setSingleLine(); hint = "channel name   ·   press OK to type"; setText(repo.searchQ); setSelectAllOnFocus(true); textSize = 26f
+            setSingleLine(); hint = hintText; setText(initial); setSelectAllOnFocus(true); textSize = 26f
             imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH; setTextColor(Neon.TEXT); setHintTextColor(Color.parseColor("#A9B6E0"))
             setPadding(dp(24), dp(16), dp(24), dp(16))
             fun frame(f: Boolean) = GradientDrawable().apply { setColor(Color.parseColor(if (f) "#172863" else "#0F1A42")); cornerRadius = dp(18).toFloat(); if (f) setStroke(dp(3), Neon.YELLOW) else setStroke(dp(1), Neon.withAlpha(Neon.BLUE, 130)) }
             background = frame(false)
             setOnFocusChangeListener { _, f -> background = frame(f) }
         }
-        val go = NeonRow(this, "Search", "Find channels across all groups").apply { setOnClickListener { dlg.dismiss(); doSearch(et.text.toString()) } }
+        val go = NeonRow(this, "Search", sub).apply { setOnClickListener { dlg.dismiss(); onSubmit(et.text.toString()) } }
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, 0, 0, dp(16)) }
         head.addView(OrbView(this).apply { energy = 0.2f }, LinearLayout.LayoutParams(dp(56), dp(56)))
-        head.addView(TextView(this).apply { text = "Search channels"; setTextColor(Neon.TEXT); textSize = 30f; typeface = Typeface.create("sans-serif-light", Typeface.NORMAL); setPadding(dp(14), 0, 0, 0) })
+        head.addView(TextView(this).apply { text = title; setTextColor(Neon.TEXT); textSize = 30f; typeface = Typeface.create("sans-serif-light", Typeface.NORMAL); setPadding(dp(14), 0, 0, 0) })
         col.addView(head); col.addView(et, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(18) })
         col.addView(go, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
         col.addView(Neon.keyHint(this, "BACK", "to cancel"))
         val frame = FrameLayout(this).apply { background = Neon.Backdrop(); addView(col, FrameLayout.LayoutParams(dp(640), -2, Gravity.CENTER)) }
         dlg.setContentView(frame)
-        et.setOnEditorActionListener { _, _, _ -> dlg.dismiss(); doSearch(et.text.toString()); true }
+        et.setOnEditorActionListener { _, _, _ -> dlg.dismiss(); onSubmit(et.text.toString()); true }
         dlg.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
-        dlg.setOnCancelListener { resetHide() }
+        dlg.setOnCancelListener { onCancel() }
         dlg.show(); hideJob?.cancel()
+    }
+
+    // ---------------------------------------------------------------- movies (Xtream VOD)
+    private fun openMovies() {
+        if (!prefs.configured) return
+        home.visibility = View.GONE; moviesView.visibility = View.VISIBLE; moviesView.alpha = 0f; moviesView.animate().alpha(1f).setDuration(240).start()
+        if (vod.ready) { moviesView.rebuild(); moviesView.focusDefault(); if (vod.cacheAgeMs() > 12 * 3600_000L) refreshMovies(quiet = true) }
+        else {
+            moviesView.showMessage("Loading movies…")
+            scope.launch {
+                val cached = vod.loadCache()
+                if (cached) { moviesView.showMessage(null); moviesView.rebuild(); moviesView.focusDefault(); scope.launch(Dispatchers.Default) { vod.warm() } }
+                if (!cached || vod.cacheAgeMs() > 12 * 3600_000L) refreshMovies(quiet = cached)
+            }
+        }
+    }
+    private fun refreshMovies(quiet: Boolean) {
+        if (vodLoading) return; vodLoading = true
+        scope.launch {
+            try {
+                if (!quiet) moviesView.showMessage("Downloading the movie list…\nthis takes a moment the first time")
+                vod.refresh { n -> if (!quiet) runOnUiThread { moviesView.showMessage("Downloading the movie list…\n${String.format("%,d", n)} films so far") } }; moviesView.showMessage(null)
+                if (moviesView.visibility == View.VISIBLE && vodPlaying == null && !moviesView.detailOpen) { moviesView.rebuild(); if (!quiet) moviesView.focusDefault() }
+                scope.launch(Dispatchers.Default) { vod.warm() }
+            } catch (e: Exception) { if (!vod.ready) moviesView.showMessage("Could not load movies\n${e.message}") }
+            vodLoading = false
+        }
+    }
+    private fun closeMovies() {
+        moviesView.visibility = View.GONE
+        showHome(); home.movies.requestFocus()
+    }
+    private fun searchMovies(q: String) {
+        flashBanner("Searching…")
+        scope.launch {
+            withContext(Dispatchers.Default) { vod.runSearch(q) }
+            if (vod.searchQ.isNotEmpty() && vod.searchRes.isEmpty()) flashBanner("No film matches “${vod.searchQ}”")
+            moviesView.showSearchResults()
+        }
+    }
+
+    private fun playVod(m: Movie, fromStart: Boolean) {
+        val resume = if (fromStart) 0L else vod.progress(m.id)?.first?.takeIf { it > 30_000 } ?: 0L
+        // one provider connection: stop whatever live channel was open, and forget it as "now playing"
+        sampleJob?.cancel(); measureJob?.cancel(); epgJob?.cancel(); retryJob?.cancel(); surveyJob?.cancel()
+        playing = null; stopped = false; vodRetries = 0
+        moviesView.visibility = View.GONE; overlay.visibility = View.GONE; infoPanel.visibility = View.GONE
+        startVod(m, resume)
+        changed()
+    }
+    private fun startVod(m: Movie, startMs: Long) {
+        vodPlaying = m
+        val p = ensurePlayer()
+        p.setMediaItem(MediaItem.fromUri(vod.movieUrl(m)), startMs); p.prepare(); p.playWhenReady = true
+        status.visibility = View.VISIBLE; status.text = "…"
+        showVodBar(true)
+        vodJob?.cancel()
+        vodJob = scope.launch {
+            var n = 0
+            while (true) {
+                kotlinx.coroutines.delay(1000)
+                val pl = player ?: return@launch; val mv = vodPlaying ?: return@launch
+                if (pl.playbackState == Player.STATE_READY) {
+                    if (++n % 5 == 0) vod.saveProgress(mv, pl.currentPosition, pl.duration)
+                    if (vodBar.visibility == View.VISIBLE) vodBar.update(mv.title, pl.currentPosition, pl.duration, !pl.isPlaying)
+                }
+            }
+        }
+    }
+    private fun vodError(error: PlaybackException) {
+        val m = vodPlaying ?: return
+        val pos = player?.currentPosition ?: 0L
+        if (error.errorCode in 2000..2999 && error.errorCode != PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND && vodRetries < 3) {
+            vodRetries++
+            status.visibility = View.VISIBLE; status.text = "Connection problem – retrying ($vodRetries/3)…"
+            retryJob?.cancel()
+            retryJob = scope.launch { kotlinx.coroutines.delay(2000L * vodRetries); if (vodPlaying?.id == m.id) startVod(m, pos) }
+            return
+        }
+        status.visibility = View.VISIBLE; status.text = "Can't play ${m.title}\n${error.errorCodeName}\nBACK to return"
+    }
+    private fun vodFinished() {
+        val m = vodPlaying ?: return
+        vod.saveProgress(m, 1, 1)         // finished: drops it from "Continue watching"
+        stopVod(reopen = false)
+    }
+    private fun stopVod(reopen: Boolean = true) {
+        val m = vodPlaying ?: return
+        player?.let { if (reopen && it.playbackState == Player.STATE_READY) vod.saveProgress(m, it.currentPosition, it.duration); it.stop(); it.clearMediaItems() }
+        vodJob?.cancel(); vodBarJob?.cancel(); retryJob?.cancel()
+        vodPlaying = null; vodBar.visibility = View.GONE; status.visibility = View.GONE
+        moviesView.visibility = View.VISIBLE
+        if (reopen) moviesView.openDetail(m) else { moviesView.closeDetail(); moviesView.focusDefault() }
+        changed()
+    }
+    private fun showVodBar(keep: Boolean = false) {
+        val m = vodPlaying ?: return; val p = player ?: return
+        vodBar.update(m.title, p.currentPosition, p.duration, !p.isPlaying)
+        vodBar.visibility = View.VISIBLE; vodBar.bringToFront(); status.bringToFront()
+        vodBarJob?.cancel()
+        vodBarJob = scope.launch { kotlinx.coroutines.delay(if (keep) 5000 else 4000); if (player?.isPlaying == true) vodBar.visibility = View.GONE else vodBarJob = null }
+    }
+    private fun vodKey(e: KeyEvent): Boolean {
+        if (e.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(e)
+        val p = player ?: return super.dispatchKeyEvent(e)
+        fun seek(ms: Long) {
+            val dur = if (p.duration > 0) p.duration else Long.MAX_VALUE / 4
+            p.seekTo((p.currentPosition + ms).coerceIn(0L, (dur - 2000).coerceAtLeast(0L))); showVodBar()
+        }
+        val accel = 1 + minOf(e.repeatCount / 3, 8)
+        when (e.keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> seek(-10_000L * accel)
+            KeyEvent.KEYCODE_DPAD_RIGHT -> seek(10_000L * accel)
+            KeyEvent.KEYCODE_DPAD_UP -> seek(60_000L * accel)
+            KeyEvent.KEYCODE_DPAD_DOWN -> seek(-60_000L * accel)
+            KeyEvent.KEYCODE_MEDIA_REWIND -> seek(-30_000L * accel)
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> seek(30_000L * accel)
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { if (e.repeatCount == 0) { if (p.isPlaying) p.pause() else p.play(); showVodBar() } }
+            KeyEvent.KEYCODE_MEDIA_PLAY -> { p.play(); showVodBar() }
+            KeyEvent.KEYCODE_MEDIA_PAUSE -> { p.pause(); showVodBar() }
+            KeyEvent.KEYCODE_BACK -> stopVod()
+            else -> return super.dispatchKeyEvent(e)
+        }
+        return true
     }
 
     private fun doSearch(q: String) {
@@ -791,6 +941,16 @@ class MainActivity : Activity() {
 
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
         val k = e.keyCode
+        if (vodPlaying != null) return vodKey(e)
+        if (::moviesView.isInitialized && moviesView.visibility == View.VISIBLE) {
+            if (e.action == KeyEvent.ACTION_DOWN) {
+                if (k == KeyEvent.KEYCODE_BACK) { if (!moviesView.handleBack()) moviesView.cb.close(); return true }
+                if (!moviesView.detailOpen && (k == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD || k == KeyEvent.KEYCODE_MEDIA_REWIND || k == KeyEvent.KEYCODE_PAGE_DOWN || k == KeyEvent.KEYCODE_PAGE_UP || k == KeyEvent.KEYCODE_CHANNEL_DOWN || k == KeyEvent.KEYCODE_CHANNEL_UP)) {
+                    moviesView.pageJump(k == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD || k == KeyEvent.KEYCODE_PAGE_DOWN || k == KeyEvent.KEYCODE_CHANNEL_DOWN); return true
+                }
+            }
+            return super.dispatchKeyEvent(e)
+        }
         if (e.action == KeyEvent.ACTION_DOWN && (settingsPanel != null || (::home.isInitialized && home.visibility == View.VISIBLE) || (::splash.isInitialized && splash.visibility == View.VISIBLE))) {
             if (k == KeyEvent.KEYCODE_BACK && settingsPanel != null) { closeSettings(); return true }
             if (k == KeyEvent.KEYCODE_BACK && splash.visibility == View.VISIBLE) return true

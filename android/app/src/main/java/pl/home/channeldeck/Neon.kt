@@ -49,8 +49,8 @@ object Neon {
     /** Provider names use superscript letters ("ᴴᴰ", "ᴿᴬᵂ"); show them as plain caps, and drop a leading "PL|" style prefix. */
     fun plain(s: String): String {
         val m = mapOf('ᴴ' to 'H', 'ᴰ' to 'D', 'ᴿ' to 'R', 'ᴬ' to 'A', 'ᵂ' to 'W', 'ᵁ' to 'U', 'ⱽ' to 'V', 'ᴵ' to 'I', 'ᴾ' to 'P', 'ᴸ' to 'L', 'ᴮ' to 'B', 'ᴼ' to 'O', 'ʸ' to 'y', 'ᵀ' to 'T',
-            'ʰ' to 'h', 'ᵉ' to 'e', 'ᵛ' to 'v', 'ᶜ' to 'c', 'ˢ' to 's', '⁰' to '0', '¹' to '1', '²' to '2', '³' to '3', '⁴' to '4', '⁵' to '5', '⁶' to '6', '⁷' to '7', '⁸' to '8', '⁹' to '9')
-        return s.map { m[it] ?: it }.joinToString("").replace(Regex("^[A-Za-z]{2,3}\\s*\\|\\s*"), "").replace(Regex("^#{2,}\\s*|\\s*#{2,}$"), "").trim()
+            'ᵒ' to 'o', 'ˡ' to 'l', 'ᶦ' to 'i', 'ⁿ' to 'n', 'ʰ' to 'h', 'ᵉ' to 'e', 'ᵛ' to 'v', 'ᶜ' to 'c', 'ˢ' to 's', '⁰' to '0', '¹' to '1', '²' to '2', '³' to '3', '⁴' to '4', '⁵' to '5', '⁶' to '6', '⁷' to '7', '⁸' to '8', '⁹' to '9')
+        return java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFKC).map { m[it] ?: it }.joinToString("").replace(Regex("^[A-Za-z]{2,3}\\s*\\|\\s*"), "").replace(Regex("^#{2,}\\s*|\\s*#{2,}$"), "").trim()
     }
 
     /** Dark gradient + two static soft glows, built once. Cheap, and gives the flat navy some depth. */
@@ -345,12 +345,12 @@ class NeonRow(ctx: Context, val title: String, var value: String, val big: Boole
 }
 
 /** Home: orb + wordmark + clock, four tiles, resume hero. Everything sits on one 48dp margin / 3-gap grid. */
-class HomeView(ctx: Context, val onLive: () -> Unit, val onResume: () -> Unit, val onSoon: (String) -> Unit, val onSettings: () -> Unit) : FrameLayout(ctx) {
+class HomeView(ctx: Context, val onLive: () -> Unit, val onResume: () -> Unit, val onMovies: () -> Unit, val onSoon: (String) -> Unit, val onSettings: () -> Unit) : FrameLayout(ctx) {
     private val d = ctx.resources.displayMetrics.density
     val orb = OrbView(ctx).apply { energy = 0.2f }
     private val clock = TextView(ctx); private val date = TextView(ctx)
     val live = TileView(ctx, "live", "Live TV", "…")
-    val movies = TileView(ctx, "movies", "Movies", "Not available yet", soon = true)
+    val movies = TileView(ctx, "movies", "Movies", "Films on demand")
     val series = TileView(ctx, "series", "Series", "Not available yet", soon = true)
     val settings = TileView(ctx, "settings", "Settings", "Format · API · About")
     val resume = NeonRow(ctx, "Resume", "", big = true)
@@ -391,7 +391,7 @@ class HomeView(ctx: Context, val onLive: () -> Unit, val onResume: () -> Unit, v
         addView(col, LayoutParams(content, -2, Gravity.CENTER_HORIZONTAL or Gravity.CENTER_VERTICAL).apply { topMargin = (68 * d).toInt() })
 
         live.setOnClickListener { onLive() }
-        movies.setOnClickListener { onSoon("Movies") }
+        movies.setOnClickListener { onMovies() }
         series.setOnClickListener { onSoon("Series") }
         settings.setOnClickListener { onSettings() }
         resume.setOnClickListener { onResume() }
