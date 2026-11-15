@@ -149,13 +149,14 @@ class SeriesPanel(ctx: Context, val m: Movie, private val ser: SeriesRepo, priva
             val pr = ser.progress(e.id)?.takeIf { it.first > 30_000 }
             val dur = mins(e.secs)
             val (txt, col) = when {
-                pr != null -> ("Resume from ${fmtTime(pr.first)}" + if (dur.isNotEmpty()) "   ·   $dur" else "") to Neon.YELLOW
+                pr != null -> ("Resume from ${fmtTime(pr.first)}   ·   hold OK to start over") to Neon.YELLOW
                 e.id == upId && upKind == "next" -> ("Up next" + if (dur.isNotEmpty()) "   ·   $dur" else "") to Neon.YELLOW
                 else -> dur to Neon.MUTED
             }
             v[2].text = txt; v[2].setTextColor(col)
             v[3].visibility = if (ser.isWatched(e.id) && pr == null) View.VISIBLE else View.GONE
             h.itemView.setOnClickListener { cb.play(ser.toMovie(m, e), false) }
+            h.itemView.setOnLongClickListener { cb.play(ser.toMovie(m, e), true); true }
         }
     }
 
