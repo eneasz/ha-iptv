@@ -51,15 +51,16 @@ class InfoPanel(ctx: Context) : LinearLayout(ctx) {
     }
 
     fun bind(ch: Channel, group: String, state: EpgState, progs: List<Prog>, tech: Tech?, measuring: Boolean) {
-        if (ch.icon.isNotEmpty()) logo.load(ch.icon) { size(184, 184); crossfade(false) } else { logo.dispose(); logo.setImageDrawable(null) }
-        title.text = "${ch.num}  ·  ${Neon.plain(ch.name)}"
+        logo.background = rr(if (ch.icon.isEmpty()) "#1B2650" else "#22FFFFFF")
+        if (ch.icon.isNotEmpty()) logo.load(ch.icon) { size(184, 184); crossfade(false) } else { logo.dispose(); logo.setImageDrawable(InitialsDrawable(Neon.plain(ch.name).removePrefix("PL: ").take(2).uppercase(), dp(80))) }
+        title.text = if (ch.isHeader) Neon.plain(ch.name) else "${ch.num}  ·  ${Neon.plain(ch.name)}"
 
         val now = System.currentTimeMillis() / 1000
         val cur = progs.firstOrNull { it.start <= now && now < it.stop }
         val nxt = progs.firstOrNull { it.start >= (cur?.stop ?: now) && it.start > now - 1 && it !== cur }
         when {
             state == EpgState.LOADING -> { nowLine.text = "Loading programme info…"; nowLine.setTextColor(Quality.GREY) }
-            state == EpgState.NO_GUIDE -> { nowLine.text = "No programme guide for this channel"; nowLine.setTextColor(Quality.GREY) }
+            state == EpgState.NO_GUIDE -> { nowLine.text = group; nowLine.setTextColor(Neon.MUTED) }
             cur == null -> { nowLine.text = if (state == EpgState.EMPTY) "No programme info right now" else "Programme data out of date"; nowLine.setTextColor(Quality.GREY) }
             else -> {
                 val left = ((cur.stop - now) / 60).toInt().coerceAtLeast(0)
@@ -79,7 +80,7 @@ class InfoPanel(ctx: Context) : LinearLayout(ctx) {
             if (bold) sb.setSpan(StyleSpan(Typeface.BOLD), s, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
         if (tech == null) {
-            add(if (measuring) "Measuring real quality…" else "Quality: not measured yet", Quality.GREY)
+            if (measuring) add("Measuring real quality…", Quality.GREY)
             if (claim > 0) add("   (name claims ${Quality.short(claim)})", Quality.GREY)
         } else {
             val a = Quality.actual(tech.w, tech.h)

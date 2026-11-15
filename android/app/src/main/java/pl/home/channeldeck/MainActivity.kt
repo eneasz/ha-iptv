@@ -620,11 +620,19 @@ class MainActivity : Activity() {
     private fun resetHide() { hideJob?.cancel(); hideJob = scope.launch { kotlinx.coroutines.delay(15000); if (movingIdx < 0) { if (playing == null) showHome() else hideOverlay() } } }
     private fun scrollTo(rv: RecyclerView, pos: Int) { (rv.layoutManager as LinearLayoutManager).scrollToPositionWithOffset(pos, dp(120)) }
 
-    private fun focusPos(rv: RecyclerView, pos: Int, tries: Int = 30) {
+    private fun skipHeader(rv: RecyclerView, pos: Int, d: Int = 1): Int {
+        if (rv !== chanRv) return pos
+        var p = pos; val n = chanAdapter.items.size
+        while (p in 0 until n && chanAdapter.items[p].isHeader) p += d
+        return if (p in 0 until n) p else pos
+    }
+
+    private fun focusPos(rv: RecyclerView, pos0: Int, tries: Int = 30) {
+        val pos = skipHeader(rv, pos0)
         scrollTo(rv, pos)
         rv.post {
             val h = rv.findViewHolderForAdapterPosition(pos)
-            if (h != null) h.itemView.requestFocus() else if (tries > 0) rv.postDelayed({ focusPos(rv, pos, tries - 1) }, 40)
+            if (h != null) h.itemView.requestFocus() else if (tries > 0) rv.postDelayed({ focusPos(rv, pos0, tries - 1) }, 40)
         }
     }
 
@@ -815,7 +823,8 @@ class MainActivity : Activity() {
                     for (r in listOf(regionRv, groupRv, chanRv)) { val q = focusedIn(r); if (q >= 0) { rv = r; p = q; break } }
                     if (rv == null) { rv = navRv; p = navPos }
                     if (rv != null && p >= 0) {
-                        val t = (p + d).coerceIn(0, ((rv.adapter?.itemCount ?: 1) - 1).coerceAtLeast(0))
+                        var t = (p + d).coerceIn(0, ((rv.adapter?.itemCount ?: 1) - 1).coerceAtLeast(0))
+                        if (rv === chanRv) { val s = skipHeader(rv, t, d); t = if (chanAdapter.items.getOrNull(s)?.isHeader == true) p else s }
                         navRv = rv; navPos = t
                         val h = rv.findViewHolderForAdapterPosition(t)
                         if (h != null) h.itemView.requestFocus() else focusPos(rv, t)
@@ -1124,10 +1133,14 @@ class MainActivity : Activity() {
             val tg = tag?.invoke(it); h.tagView.text = tg?.first ?: ""; h.tagView.visibility = if (tg == null) View.GONE else View.VISIBLE; if (tg != null) h.tagView.setTextColor(tg.second)
             val url = icon?.invoke(it)
             if (h.logo != null) { h.logo.alpha = 1f; h.logo.background = GradientDrawable().apply { setColor(if (url.isNullOrEmpty()) Color.parseColor("#1B2650") else Neon.withAlpha(Color.WHITE, 235)); cornerRadius = dp(8).toFloat() }; if (!url.isNullOrEmpty()) h.logo.load(url) { size(108, 80); crossfade(false); listener(onError = { _, _ -> h.logo.background = GradientDrawable().apply { setColor(Color.parseColor("#1B2650")); cornerRadius = dp(8).toFloat() }; h.logo.setImageDrawable(InitialsDrawable(Neon.plain(label(it)).removePrefix("PL: ").take(2).uppercase(), dp(40))) }) } else { h.logo.dispose(); h.logo.setImageDrawable(InitialsDrawable(Neon.plain(label(it)).removePrefix("PL: ").take(2).uppercase(), dp(40))) } }
+            val hdr = (it as? Channel)?.isHeader == true
+            h.itemView.isFocusable = !hdr; h.itemView.isClickable = !hdr
+            if (hdr) { h.logo?.visibility = View.GONE; h.count.visibility = View.GONE; h.itemView.background = null; h.name.setTextColor(Neon.CYAN); h.name.textSize = 15f; h.name.letterSpacing = 0.15f; h.star.visibility = View.GONE; h.tagView.visibility = View.GONE }
+            else { h.logo?.visibility = View.VISIBLE; h.count.visibility = View.VISIBLE; h.name.setTextColor(Neon.TEXT); h.name.textSize = 20f; h.name.letterSpacing = 0f }
             h.name.setCompoundDrawablesRelativeWithIntrinsicBounds(glyph?.invoke(it)?.let { g -> GlyphDrawable(g, dp(22)) }, null, null, null); h.name.compoundDrawablePadding = dp(12)
             h.name.setTypeface(null, if (i == activeIdx || i == movingIdx) Typeface.BOLD else Typeface.NORMAL)
             h.itemView.setBackgroundColor(Color.TRANSPARENT)
-            h.itemView.background = if (i == movingIdx) GradientDrawable().apply { setColor(Color.parseColor("#F2994A")); cornerRadius = dp(8).toFloat() } else rowBg()
+            if (!hdr) h.itemView.background = if (i == movingIdx) GradientDrawable().apply { setColor(Color.parseColor("#F2994A")); cornerRadius = dp(8).toFloat() } else rowBg()
         }
 
         override fun getItemCount() = items.size

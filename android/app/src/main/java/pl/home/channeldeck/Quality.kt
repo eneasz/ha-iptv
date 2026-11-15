@@ -45,7 +45,7 @@ object Quality {
     fun rowTag(name: String, m: IntArray?): Pair<String, Int>? {
         if (m == null) return null
         val a = actual(m[0], m[1]); val c = claimed(name)
-        return if (c > a) Pair("⚠${short(a)}", RED) else Pair(short(a), if (a >= 3) GREEN else GREY)
+        return if (c > a) Pair("⚠${short(a)}", RED) else Pair(short(a), if (a >= 3) GREEN else if (a == 2) Neon.CYAN else Neon.MUTED)
     }
 
     fun vcodec(mime: String?, codecs: String?): String = when {
