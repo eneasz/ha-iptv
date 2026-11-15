@@ -1,4 +1,9 @@
 # Changelog
+## 0.2.1
+App 0.4.1. The Home Assistant integration is unchanged.
+
+- Series: hold OK on an episode to start it from the beginning. Episodes with a saved position now say "hold OK to start over". Films already had a Start over button.
+
 ## 0.2.0
 App 0.4 adds **Movies** and **Series** (Xtream VOD), a calmer player and a fix for the stick running out of memory. The Home Assistant integration is unchanged.
 
