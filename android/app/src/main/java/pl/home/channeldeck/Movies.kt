@@ -215,7 +215,7 @@ class VodRepo(ctx: Context, private val prefs: Prefs) {
         val toks = nq.split(' ')
         searchRes = norms().asSequence().filter { (_, n) -> toks.all { n.contains(it) } }
             .sortedWith(compareBy({ (_, n) -> if (n == nq) 0 else if (n.startsWith(nq)) 1 else 2 }, { (m, _) -> -m.added }))
-            .map { it.first }.take(300).toList()
+            .map { it.first }.distinctBy { it.title + "|" + it.year }.take(300).toList()
     }
 
     // ---- resume positions: id -> "pos,dur,ts" (ms, ms, epoch s)
@@ -283,14 +283,13 @@ class PosterCard(ctx: Context, private val pw: Int, private val ph: Int) : Linea
             background = GradientDrawable().apply { setColor(Neon.YELLOW); cornerRadius = 6 * d }; visibility = GONE }
         frame.addView(chip, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply { setMargins(0, (6 * d).toInt(), (6 * d).toInt(), 0) })
         addView(frame, LayoutParams(pw, ph))
-        titleTv.apply { setTextColor(Neon.TEXT); textSize = 13f; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); setPadding(0, (7 * d).toInt(), 0, 0); minLines = 2 }
-        metaTv.apply { setTextColor(Neon.MUTED); textSize = 12f; setSingleLine(); setPadding(0, (1 * d).toInt(), 0, (4 * d).toInt()) }
+        titleTv.apply { setTextColor(Neon.TEXT); textSize = 13f; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); setPadding(0, (7 * d).toInt(), 0, 0) }
+        metaTv.apply { setTextColor(Neon.withAlpha(Neon.TEXT, 205)); textSize = 12f; setSingleLine(); setPadding(0, (1 * d).toInt(), 0, (4 * d).toInt()) }
         addView(titleTv, LayoutParams(pw, -2)); addView(metaTv, LayoutParams(pw, -2))
         setOnFocusChangeListener { _, f -> focusChanged(f) }
     }
     fun focusChanged(f: Boolean) {
-        animate().scaleX(if (f) 1.07f else 1f).scaleY(if (f) 1.07f else 1f).setDuration(150).start()
-        translationZ = if (f) 8 * d else 0f; invalidate()
+        invalidate()
     }
 
     fun bind(m: Movie, fraction: Float) {
@@ -313,7 +312,7 @@ class PosterCard(ctx: Context, private val pw: Int, private val ph: Int) : Linea
         }
         if (isFocused) {
             val sw = 3 * d; ring.strokeWidth = sw; ring.color = Neon.YELLOW
-            box.set(l + sw / 2, t + sw / 2, l + pw - sw / 2, t + ph - sw / 2); c.drawRoundRect(box, 10 * d, 10 * d, ring)
+            val o = 3 * d; box.set(l - o + sw / 2, t - o + sw / 2, l + pw + o - sw / 2, t + ph + o - sw / 2); c.drawRoundRect(box, 13 * d, 13 * d, ring)
         }
     }
     override fun onKeyUp(keyCode: Int, event: android.view.KeyEvent): Boolean {
@@ -370,7 +369,8 @@ class MoviesView(ctx: Context, private val vod: VodRepo, val cb: Cb) : FrameLayo
                 if (f) { selectJob?.let { r -> removeCallbacks(r) }; val r = Runnable { select(it.id) }; selectJob = r; postDelayed(r, 220) }
             }
             h.itemView.setOnKeyListener { _, code, ev ->
-                if (code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT && ev.action == android.view.KeyEvent.ACTION_DOWN && items.isNotEmpty()) {
+                if (code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT && ev.action == android.view.KeyEvent.ACTION_DOWN && it.id == VodRepo.FIND && vod.searchRes.isEmpty()) { cb.search(); true }
+                else if (code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT && ev.action == android.view.KeyEvent.ACTION_DOWN && items.isNotEmpty()) {
                     selectJob?.let { r -> removeCallbacks(r) }
                     if (it.id != activeCat) select(it.id)
                     focusGridAt(if (it.id == activeCat) lastGridPos else 0); true
@@ -411,7 +411,7 @@ class MoviesView(ctx: Context, private val vod: VodRepo, val cb: Cb) : FrameLayo
         val left = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         left.addView(TextView(ctx).apply { text = "Movies"; setTextColor(Neon.TEXT); textSize = 30f; typeface = Typeface.create("sans-serif-light", Typeface.NORMAL); setPadding(dp(14), 0, 0, dp(2)) })
         left.addView(TextView(ctx).apply { text = "ALL CATEGORIES"; setTextColor(Neon.CYAN); textSize = 12f; letterSpacing = 0.2f; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); setPadding(dp(14), dp(10), 0, dp(6)) })
-        catRv.apply { layoutManager = LinearLayoutManager(ctx); adapter = catAdapter; itemAnimator = null; overScrollMode = View.OVER_SCROLL_NEVER; clipToPadding = false; setPadding(0, 0, dp(6), dp(24)); isFocusable = false; descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS }
+        catRv.apply { layoutManager = LinearLayoutManager(ctx); adapter = catAdapter; itemAnimator = null; overScrollMode = View.OVER_SCROLL_NEVER; clipToPadding = true; setPadding(0, 0, dp(6), dp(40)); isVerticalFadingEdgeEnabled = true; setFadingEdgeLength(dp(40)); isFocusable = false; descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS }
         left.addView(catRv, LinearLayout.LayoutParams(-1, 0, 1f))
         content.addView(left, LinearLayout.LayoutParams(catW, -1))
         // right column
@@ -422,7 +422,7 @@ class MoviesView(ctx: Context, private val vod: VodRepo, val cb: Cb) : FrameLayo
         headCount.apply { setTextColor(Neon.MUTED); textSize = 14f; setPadding(dp(12), 0, 0, dp(3)) }
         head.addView(headTitle); head.addView(headCount)
         col.addView(head, LinearLayout.LayoutParams(-1, dp(52)))
-        grid.apply { layoutManager = GridLayoutManager(ctx, cols); adapter = gridAdapter; itemAnimator = null; overScrollMode = View.OVER_SCROLL_NEVER; clipChildren = true; clipToPadding = true; setPadding(0, dp(4), 0, dp(0)); isFocusable = false; descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS; setHasFixedSize(true); setItemViewCacheSize(10) }
+        grid.apply { layoutManager = GridLayoutManager(ctx, cols); adapter = gridAdapter; itemAnimator = null; overScrollMode = View.OVER_SCROLL_NEVER; clipChildren = true; clipToPadding = true; setPadding(0, dp(4), 0, dp(40)); isVerticalFadingEdgeEnabled = true; setFadingEdgeLength(dp(40)); isFocusable = false; descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS; setHasFixedSize(true); setItemViewCacheSize(10) }
         col.addView(grid, LinearLayout.LayoutParams(-1, 0, 1f))
         right.addView(col, LayoutParams(-1, -1))
         state.apply { setTextColor(Neon.MUTED); textSize = 18f; gravity = Gravity.CENTER; visibility = GONE }
@@ -461,7 +461,7 @@ class MoviesView(ctx: Context, private val vod: VodRepo, val cb: Cb) : FrameLayo
         headTitle.text = vod.catName(id)
         headCount.text = if (items.isEmpty()) "" else "${fmtCount(items.size)} films"
         showMessage(if (items.isNotEmpty()) null else when (id) {
-            VodRepo.FIND -> if (vod.searchQ.isEmpty()) "Press OK on “Find…” to search by title" else "No film matches “${vod.searchQ}”"
+            VodRepo.FIND -> if (vod.searchQ.isEmpty()) "Press OK or ▶ to search by title" else "No film matches “${vod.searchQ}”"
             else -> "Nothing here yet" })
     }
 
@@ -551,11 +551,11 @@ class DetailPanel(ctx: Context, val m: Movie, vod: VodRepo, cb: MoviesView.Cb, p
         col.addView(facts); col.addView(genre); col.addView(plot); col.addView(people)
         col.addView(View(ctx), LinearLayout.LayoutParams(1, dp(14)))
         val pr = vod.progress(m.id)?.takeIf { it.first > 30_000 }
-        primary = NeonRow(ctx, if (pr != null) "Resume" else "Play", if (pr != null) "from ${fmtTime(pr.first)}${if (pr.second > 0) "  of  ${fmtTime(pr.second)}" else ""}" else "Start watching")
+        primary = NeonRow(ctx, if (pr != null) "Resume" else "Play", if (pr != null) "from ${fmtTime(pr.first)}${if (pr.second > 0) "  /  ${fmtTime(pr.second)}" else ""}" else "Start watching")
         primary.setOnClickListener { cb.play(m, false) }
         col.addView(primary, LinearLayout.LayoutParams(dp(380), -2))
         if (pr != null) {
-            val again = NeonRow(ctx, "Start from the beginning", "")
+            val again = NeonRow(ctx, "Start over", "")
             again.valueTv.visibility = GONE; again.minimumHeight = dp(60)
             again.setOnClickListener { cb.play(m, true) }
             col.addView(again, LinearLayout.LayoutParams(dp(380), -2).apply { topMargin = dp(8) })
@@ -570,7 +570,8 @@ class DetailPanel(ctx: Context, val m: Movie, vod: VodRepo, cb: MoviesView.Cb, p
     fun bindInfo(i: VodInfo?) {
         if (i == null) { plot.text = "Details are unavailable right now."; return }
         plot.text = i.plot.takeIf { it.isNotEmpty() } ?: "No description from the provider."
-        val f = listOfNotNull(m.year.ifEmpty { null }, i.duration.ifEmpty { null }, if (m.rating > 0.1f) "★ " + String.format("%.1f", m.rating) else null, if (m.is4k) "4K" else null, m.ext.uppercase())
+        val dur = Regex("^(\\d+):(\\d{2}):(\\d{2})$").find(i.duration)?.let { (if (it.groupValues[1].toInt() > 0) "${it.groupValues[1].toInt()} h " else "") + "${it.groupValues[2]} min" } ?: i.duration
+        val f = listOfNotNull(m.year.ifEmpty { null }, dur.ifEmpty { null }, if (m.rating > 0.1f) "★ " + String.format("%.1f", m.rating) else null, if (m.is4k) "4K" else null, m.ext.uppercase())
         facts.text = f.joinToString("   ·   ")
         if (i.genre.isNotEmpty()) { genre.text = i.genre; genre.visibility = VISIBLE }
         val p = listOfNotNull(i.director.takeIf { it.isNotEmpty() }?.let { "Director  $it" }, i.cast.takeIf { it.isNotEmpty() }?.let { "Cast  $it" }).joinToString("\n")
@@ -587,11 +588,11 @@ class VodBar(ctx: Context) : FrameLayout(ctx) {
     private val track = View(ctx)
     init {
         setWillNotDraw(false)
-        background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.TRANSPARENT, Color.argb(235, 3, 6, 18)))
-        val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding((48 * d).toInt(), (70 * d).toInt(), (48 * d).toInt(), (22 * d).toInt()) }
+        background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.TRANSPARENT, Color.argb(150, 3, 6, 18), Color.argb(240, 3, 6, 18)))
+        val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding((48 * d).toInt(), (110 * d).toInt(), (48 * d).toInt(), (40 * d).toInt()) }
         title.apply { setTextColor(Neon.TEXT); textSize = 22f; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); setSingleLine() }
         time.apply { setTextColor(Neon.TEXT); textSize = 15f; setPadding(0, (4 * d).toInt(), 0, 0) }
-        hint.apply { setTextColor(Neon.MUTED); textSize = 13f; text = "◀ ▶  10 s     ▲ ▼  1 min     OK  pause     BACK  stop" }
+        hint.apply { setTextColor(Neon.withAlpha(Neon.TEXT, 220)); textSize = 17f; setPadding(0, (6 * d).toInt(), 0, 0); text = "◀ ▶  10 s     ▲ ▼  1 min     OK  pause     BACK  stop" }
         col.addView(title)
         col.addView(track, LinearLayout.LayoutParams(-1, (14 * d).toInt()).apply { topMargin = (10 * d).toInt() })
         col.addView(time); col.addView(hint)
@@ -609,7 +610,7 @@ class VodBar(ctx: Context) : FrameLayout(ctx) {
         if (track.height == 0) return
         val loc = IntArray(2); track.getLocationInWindow(loc); val me = IntArray(2); getLocationInWindow(me)
         val l = (loc[0] - me[0]).toFloat(); val t = (loc[1] - me[1]).toFloat() + track.height / 2f - 2 * d; val w = track.width.toFloat(); val h = 4 * d
-        p.color = Neon.withAlpha(Color.WHITE, 60); c.drawRoundRect(l, t, l + w, t + h, h / 2, h / 2, p)
+        p.color = Neon.withAlpha(Color.WHITE, 90); c.drawRoundRect(l, t - 2 * d, l + w, t + h + 2 * d, h / 2, h / 2, p)
         p.color = Neon.YELLOW; c.drawRoundRect(l, t, l + w * frac, t + h, h / 2, h / 2, p)
         c.drawCircle(l + w * frac, t + h / 2, 7 * d, p)
     }

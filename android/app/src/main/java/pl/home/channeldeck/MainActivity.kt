@@ -762,7 +762,6 @@ class MainActivity : Activity() {
         showHome(); home.movies.requestFocus()
     }
     private fun searchMovies(q: String) {
-        flashBanner("Searching…")
         scope.launch {
             withContext(Dispatchers.Default) { vod.runSearch(q) }
             if (vod.searchQ.isNotEmpty() && vod.searchRes.isEmpty()) flashBanner("No film matches “${vod.searchQ}”")
