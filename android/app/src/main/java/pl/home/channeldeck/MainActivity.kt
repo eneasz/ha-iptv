@@ -96,6 +96,9 @@ class MainActivity : Activity() {
     private lateinit var splash: SplashView
     private lateinit var vod: VodRepo
     private lateinit var moviesView: MoviesView
+    private lateinit var seriesView: MoviesView
+    private lateinit var ser: SeriesRepo
+    private lateinit var curRepo: VodRepo; private lateinit var curView: MoviesView; private lateinit var playRepo: VodRepo
     private lateinit var vodBar: VodBar
     private var vodPlaying: Movie? = null
     private var vodJob: Job? = null
@@ -139,7 +142,7 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         prefs = Prefs(this)
         repo = Repo(prefs, filesDir)
-        vod = VodRepo(this, prefs)
+        vod = VodRepo(this, prefs); ser = SeriesRepo(this, prefs); curRepo = vod; playRepo = vod
         buildUi()
         applyIntentConfig(intent)
         apiServer = ApiServer(8765, apiHost).also { it.start() }
@@ -274,15 +277,18 @@ class MainActivity : Activity() {
         root.addView(overlay, FrameLayout.LayoutParams(-1, -1))
         setHint()
         home = HomeView(this, onLive = { openLive() }, onResume = { resumeFromHome() },
-            onMovies = { openMovies() }, onSoon = { flashBanner("$it isn't available yet – coming next") }, onSettings = { openSettings() }).apply { visibility = View.GONE }
+            onMovies = { openMovies() }, onSeries = { openSeries() }, onSettings = { openSettings() }).apply { visibility = View.GONE }
         root.addView(home, FrameLayout.LayoutParams(-1, -1))
-        moviesView = MoviesView(this, vod, object : MoviesView.Cb {
+        fun mkView(repo: VodRepo) = MoviesView(this, repo, object : MoviesView.Cb {
             override fun play(m: Movie, fromStart: Boolean) { playVod(m, fromStart) }
-            override fun search() { askText("Search movies", "movie title   ·   press OK to type", vod.searchQ, "Find films across all categories") { q -> searchMovies(q) } }
+            override fun search() { askText("Search ${repo.label.lowercase()}", "${repo.unit} title   ·   press OK to type", repo.searchQ, "Find ${repo.unit} across all categories") { q -> searchMovies(q) } }
             override fun close() { closeMovies() }
-            override fun loadInfo(m: Movie, done: (VodInfo?) -> Unit) { scope.launch { done(vod.info(m)) } }
+            override fun loadInfo(m: Movie, done: (VodInfo?) -> Unit) { scope.launch { done(repo.info(m)) } }
+            override fun loadSeries(m: Movie, done: (SeriesInfo?) -> Unit) { scope.launch { done(ser.seriesInfo(m)) } }
         }).apply { visibility = View.GONE }
+        moviesView = mkView(vod); seriesView = mkView(ser); curView = moviesView
         root.addView(moviesView, FrameLayout.LayoutParams(-1, -1))
+        root.addView(seriesView, FrameLayout.LayoutParams(-1, -1))
         vodBar = VodBar(this).apply { visibility = View.GONE }
         root.addView(vodBar, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         splash = SplashView(this); splashAt = android.os.SystemClock.uptimeMillis()
@@ -371,7 +377,7 @@ class MainActivity : Activity() {
             val start = last ?: repo.channels(gid).firstOrNull()
             showChannels(gid); playCtx = gid
             scope.launch(Dispatchers.Default) { repo.warm() }
-            scope.launch { kotlinx.coroutines.delay(4000); if (!vod.ready && vod.loadCache() && home.visibility == View.VISIBLE) { home.movies.sub = String.format("%,d films", vod.total); home.movies.invalidate() } }
+            scope.launch { kotlinx.coroutines.delay(4000); if (!vod.ready) vod.loadCache(); if (!ser.ready) ser.loadCache(); updateHomeCounts() }
             val pc = pendingCmd; pendingCmd = null
             if (pc != null) { dismissSplash(); runCommand(pc) }      // a command from HA plays straight away
             else { val wait = (1900 - (android.os.SystemClock.uptimeMillis() - splashAt)).coerceAtLeast(0); scope.launch { kotlinx.coroutines.delay(wait); if (playing == null) showHome() else dismissSplash() } }
@@ -640,7 +646,7 @@ class MainActivity : Activity() {
         player?.pause()
         val c = playing ?: repo.channel(prefs.lastChannel)
         home.setResume(c?.name, c?.let { groupName(it) }, c?.icon)
-        if (vod.ready) { home.movies.sub = String.format("%,d films", vod.total); home.movies.invalidate() }
+        updateHomeCounts()
         home.live.sub = if (dataReady) "${repo.groups.count { !Repo.pseudo(it.id) }} groups" else ""
         home.visibility = View.VISIBLE; home.alpha = 0f; home.animate().alpha(1f).setDuration(320).start()
         dismissSplash(); banner.bringToFront(); home.focusDefault(); changed()
@@ -733,57 +739,74 @@ class MainActivity : Activity() {
         dlg.show(); hideJob?.cancel()
     }
 
-    // ---------------------------------------------------------------- movies (Xtream VOD)
-    private fun openMovies() {
+    // ---------------------------------------------------------------- movies & series (Xtream VOD)
+    private fun updateHomeCounts() {
+        if (!::home.isInitialized) return
+        if (vod.ready) { home.movies.sub = String.format("%,d films", vod.total); home.movies.invalidate() }
+        if (ser.ready) { home.series.sub = String.format("%,d series", ser.total); home.series.invalidate() }
+    }
+    private val loadingRepos = HashSet<VodRepo>()
+    private fun openMovies() = openSection(vod, moviesView)
+    private fun openSeries() = openSection(ser, seriesView)
+    private fun openSection(repo: VodRepo, view: MoviesView) {
         if (!prefs.configured) return
-        home.visibility = View.GONE; moviesView.visibility = View.VISIBLE; moviesView.alpha = 0f; moviesView.animate().alpha(1f).setDuration(240).start()
-        if (vod.ready) { moviesView.rebuild(); moviesView.focusDefault(); if (vod.cacheAgeMs() > 12 * 3600_000L) refreshMovies(quiet = true) }
+        curRepo = repo; curView = view
+        home.visibility = View.GONE; view.visibility = View.VISIBLE; view.alpha = 0f; view.animate().alpha(1f).setDuration(240).start()
+        if (repo.ready) { view.rebuild(); view.focusDefault(); if (repo.cacheAgeMs() > 12 * 3600_000L) refreshSection(repo, view, quiet = true) }
         else {
-            moviesView.showMessage("Loading movies…")
+            view.showMessage("Loading ${repo.label.lowercase()}…")
             scope.launch {
-                val cached = vod.loadCache()
-                if (cached) { moviesView.showMessage(null); moviesView.rebuild(); moviesView.focusDefault(); scope.launch(Dispatchers.Default) { vod.warm() } }
-                if (!cached || vod.cacheAgeMs() > 12 * 3600_000L) refreshMovies(quiet = cached)
+                val cached = repo.loadCache()
+                if (cached) { view.showMessage(null); view.rebuild(); view.focusDefault(); scope.launch(Dispatchers.Default) { repo.warm() } }
+                if (!cached || repo.cacheAgeMs() > 12 * 3600_000L) refreshSection(repo, view, quiet = cached)
             }
         }
     }
-    private fun refreshMovies(quiet: Boolean) {
-        if (vodLoading) return; vodLoading = true
+    private fun refreshSection(repo: VodRepo, view: MoviesView, quiet: Boolean) {
+        if (!loadingRepos.add(repo)) return
         scope.launch {
+            val what = repo.label.lowercase()
             try {
-                if (!quiet) moviesView.showMessage("Downloading the movie list…\nthis takes a moment the first time")
-                vod.refresh { n -> if (!quiet) runOnUiThread { moviesView.showMessage("Downloading the movie list…\n${String.format("%,d", n)} films so far") } }; moviesView.showMessage(null)
-                if (moviesView.visibility == View.VISIBLE && vodPlaying == null && !moviesView.detailOpen) { moviesView.rebuild(); if (!quiet) moviesView.focusDefault() }
-                scope.launch(Dispatchers.Default) { vod.warm() }
-            } catch (e: Exception) { if (!vod.ready) moviesView.showMessage("Could not load movies\n${e.message}") }
-            vodLoading = false
+                if (!quiet) view.showMessage("Downloading the $what list…\nthis takes a moment the first time")
+                repo.refresh { n -> if (!quiet) runOnUiThread { view.showMessage("Downloading the $what list…\n${String.format("%,d", n)} ${repo.unit} so far") } }; view.showMessage(null)
+                if (view.visibility == View.VISIBLE && vodPlaying == null && !view.detailOpen) { view.rebuild(); if (!quiet) view.focusDefault() }
+                scope.launch(Dispatchers.Default) { repo.warm() }
+                updateHomeCounts()
+            } catch (e: Exception) { if (!repo.ready) view.showMessage("Could not load $what\n${e.message}") }
+            loadingRepos.remove(repo)
         }
     }
     private fun closeMovies() {
-        moviesView.visibility = View.GONE
-        showHome(); home.movies.requestFocus()
+        val wasSeries = curRepo === ser
+        curView.visibility = View.GONE
+        showHome(); (if (wasSeries) home.series else home.movies).requestFocus()
     }
     private fun searchMovies(q: String) {
+        val repo = curRepo; val view = curView
         scope.launch {
-            withContext(Dispatchers.Default) { vod.runSearch(q) }
-            if (vod.searchQ.isNotEmpty() && vod.searchRes.isEmpty()) flashBanner("No film matches “${vod.searchQ}”")
-            moviesView.showSearchResults()
+            withContext(Dispatchers.Default) { repo.runSearch(q) }
+            if (repo.searchQ.isNotEmpty() && repo.searchRes.isEmpty()) flashBanner("No ${if (repo === ser) "series" else "film"} matches “${repo.searchQ}”")
+            view.showSearchResults()
         }
     }
+    private fun activeSection(): MoviesView? =
+        if (::moviesView.isInitialized && moviesView.visibility == View.VISIBLE) moviesView
+        else if (::seriesView.isInitialized && seriesView.visibility == View.VISIBLE) seriesView else null
 
     private fun playVod(m: Movie, fromStart: Boolean) {
-        val resume = if (fromStart) 0L else vod.progress(m.id)?.first?.takeIf { it > 30_000 } ?: 0L
+        playRepo = if (m.ep) ser else vod
+        val resume = if (fromStart) 0L else playRepo.progress(m.id)?.first?.takeIf { it > 30_000 } ?: 0L
         // one provider connection: stop whatever live channel was open, and forget it as "now playing"
         sampleJob?.cancel(); measureJob?.cancel(); epgJob?.cancel(); retryJob?.cancel(); surveyJob?.cancel()
         playing = null; stopped = false; vodRetries = 0
-        moviesView.visibility = View.GONE; overlay.visibility = View.GONE; infoPanel.visibility = View.GONE
+        moviesView.visibility = View.GONE; seriesView.visibility = View.GONE; overlay.visibility = View.GONE; infoPanel.visibility = View.GONE
         startVod(m, resume)
         changed()
     }
     private fun startVod(m: Movie, startMs: Long) {
         vodPlaying = m; tech = null
         val p = ensurePlayer()
-        p.setMediaItem(MediaItem.fromUri(vod.movieUrl(m)), startMs); p.prepare(); p.playWhenReady = true
+        p.setMediaItem(MediaItem.fromUri(playRepo.movieUrl(m)), startMs); p.prepare(); p.playWhenReady = true
         status.visibility = View.VISIBLE; status.text = "…"
         showVodBar(true)
         vodJob?.cancel()
@@ -793,7 +816,7 @@ class MainActivity : Activity() {
                 kotlinx.coroutines.delay(1000)
                 val pl = player ?: return@launch; val mv = vodPlaying ?: return@launch
                 if (pl.playbackState == Player.STATE_READY) {
-                    if (++n % 5 == 0) vod.saveProgress(mv, pl.currentPosition, pl.duration)
+                    if (++n % 5 == 0) playRepo.saveProgress(mv, pl.currentPosition, pl.duration)
                     if (vodBar.visibility == View.VISIBLE) vodBarUpdate(mv.title, pl.currentPosition, pl.duration, !pl.isPlaying)
                 }
             }
@@ -813,17 +836,22 @@ class MainActivity : Activity() {
     }
     private fun vodFinished() {
         val m = vodPlaying ?: return
-        vod.saveProgress(m, 1, 1)         // finished: drops it from "Continue watching"
+        playRepo.saveProgress(m, 1, 1)         // finished: drops it from "Continue watching"
+        val next = if (m.ep) ser.nextAfter(m) else null
+        if (next != null) { playVod(next, false); return }       // binge: straight into the next episode
         stopVod(reopen = false)
     }
     private fun stopVod(reopen: Boolean = true) {
         val m = vodPlaying ?: return
         closeTracks()
-        player?.let { if (reopen && it.playbackState == Player.STATE_READY) vod.saveProgress(m, it.currentPosition, it.duration); it.stop(); it.clearMediaItems() }
+        player?.let { if (reopen && it.playbackState == Player.STATE_READY) playRepo.saveProgress(m, it.currentPosition, it.duration); it.stop(); it.clearMediaItems() }
         vodJob?.cancel(); vodBarJob?.cancel(); retryJob?.cancel()
         vodPlaying = null; vodBar.visibility = View.GONE; status.visibility = View.GONE
-        moviesView.visibility = View.VISIBLE
-        if (reopen) moviesView.openDetail(m) else { moviesView.closeDetail(); moviesView.focusDefault() }
+        val view = if (m.ep) seriesView else moviesView
+        curView = view; curRepo = if (m.ep) ser else vod
+        view.visibility = View.VISIBLE
+        val card = if (m.ep) ser.movie(m.cat) else m
+        if (reopen && card != null) view.openDetail(card) else { view.closeDetail(); view.focusDefault() }
         changed()
     }
     private fun showVodBar(keep: Boolean = false) {
@@ -1009,11 +1037,12 @@ class MainActivity : Activity() {
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
         val k = e.keyCode
         if (vodPlaying != null) return vodKey(e)
-        if (::moviesView.isInitialized && moviesView.visibility == View.VISIBLE) {
+        val sec = activeSection()
+        if (sec != null) {
             if (e.action == KeyEvent.ACTION_DOWN) {
-                if (k == KeyEvent.KEYCODE_BACK) { if (!moviesView.handleBack()) moviesView.cb.close(); return true }
-                if (!moviesView.detailOpen && (k == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD || k == KeyEvent.KEYCODE_MEDIA_REWIND || k == KeyEvent.KEYCODE_PAGE_DOWN || k == KeyEvent.KEYCODE_PAGE_UP || k == KeyEvent.KEYCODE_CHANNEL_DOWN || k == KeyEvent.KEYCODE_CHANNEL_UP)) {
-                    moviesView.pageJump(k == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD || k == KeyEvent.KEYCODE_PAGE_DOWN || k == KeyEvent.KEYCODE_CHANNEL_DOWN); return true
+                if (k == KeyEvent.KEYCODE_BACK) { if (!sec.handleBack()) sec.cb.close(); return true }
+                if (!sec.detailOpen && (k == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD || k == KeyEvent.KEYCODE_MEDIA_REWIND || k == KeyEvent.KEYCODE_PAGE_DOWN || k == KeyEvent.KEYCODE_PAGE_UP || k == KeyEvent.KEYCODE_CHANNEL_DOWN || k == KeyEvent.KEYCODE_CHANNEL_UP)) {
+                    sec.pageJump(k == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD || k == KeyEvent.KEYCODE_PAGE_DOWN || k == KeyEvent.KEYCODE_CHANNEL_DOWN); return true
                 }
             }
             return super.dispatchKeyEvent(e)

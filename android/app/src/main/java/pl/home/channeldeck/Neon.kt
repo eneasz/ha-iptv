@@ -345,13 +345,13 @@ class NeonRow(ctx: Context, val title: String, var value: String, val big: Boole
 }
 
 /** Home: orb + wordmark + clock, four tiles, resume hero. Everything sits on one 48dp margin / 3-gap grid. */
-class HomeView(ctx: Context, val onLive: () -> Unit, val onResume: () -> Unit, val onMovies: () -> Unit, val onSoon: (String) -> Unit, val onSettings: () -> Unit) : FrameLayout(ctx) {
+class HomeView(ctx: Context, val onLive: () -> Unit, val onResume: () -> Unit, val onMovies: () -> Unit, val onSeries: () -> Unit, val onSettings: () -> Unit) : FrameLayout(ctx) {
     private val d = ctx.resources.displayMetrics.density
     val orb = OrbView(ctx).apply { energy = 0.2f }
     private val clock = TextView(ctx); private val date = TextView(ctx)
     val live = TileView(ctx, "live", "Live TV", "…")
     val movies = TileView(ctx, "movies", "Movies", "Films on demand")
-    val series = TileView(ctx, "series", "Series", "Not available yet", soon = true)
+    val series = TileView(ctx, "series", "Series", "Shows on demand")
     val settings = TileView(ctx, "settings", "Settings", "Format · API · About")
     val resume = NeonRow(ctx, "Resume", "", big = true)
     private val tick = object : Runnable { override fun run() { updateClock(); postDelayed(this, 20_000) } }
@@ -392,7 +392,7 @@ class HomeView(ctx: Context, val onLive: () -> Unit, val onResume: () -> Unit, v
 
         live.setOnClickListener { onLive() }
         movies.setOnClickListener { onMovies() }
-        series.setOnClickListener { onSoon("Series") }
+        series.setOnClickListener { onSeries() }
         settings.setOnClickListener { onSettings() }
         resume.setOnClickListener { onResume() }
         updateClock()

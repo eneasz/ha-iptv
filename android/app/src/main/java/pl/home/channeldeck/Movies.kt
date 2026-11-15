@@ -34,7 +34,7 @@ import java.net.URLEncoder
 // ====================================================================== data
 
 data class Movie(val id: String, val title: String, val year: String, val cat: String, val poster: String,
-                 val rating: Float, val ext: String, val added: Long, val is4k: Boolean)
+                 val rating: Float, val ext: String, val added: Long, val is4k: Boolean, val ep: Boolean = false)   // ep: an episode; its `cat` then holds the series id
 data class VCat(val id: String, val label: String, val count: Int)
 data class VodInfo(val plot: String, val genre: String, val duration: String, val cast: String, val director: String)
 
@@ -48,26 +48,29 @@ fun fmtTime(ms: Long): String {
 }
 
 /** Xtream Codes VOD (movies) client: streamed JSON parse (the list is ~12 MB), on-disk cache, per-movie resume positions. */
-class VodRepo(ctx: Context, private val prefs: Prefs) {
+open class VodRepo(ctx: Context, private val prefs: Prefs, protected val series: Boolean = false) {
     private val dir = ctx.filesDir
-    private val sp = ctx.getSharedPreferences("vod", Context.MODE_PRIVATE)
+    private val pfx = if (series) "series" else "vod"
+    val label get() = if (series) "Series" else "Movies"
+    val unit get() = if (series) "series" else "films"
+    protected val sp = ctx.getSharedPreferences(pfx, Context.MODE_PRIVATE)
     var cats: List<VCat> = emptyList(); private set
     private var byCat: Map<String, List<Movie>> = emptyMap()
-    private var byId: Map<String, Movie> = emptyMap()
+    protected var byId: Map<String, Movie> = emptyMap()
     var newest: List<Movie> = emptyList(); private set
     @Volatile var ready = false; private set
     val total get() = byId.size
     var searchQ = ""; var searchRes: List<Movie> = emptyList()
 
-    private val catFile get() = File(dir, "vod_cats.json")
-    private val strFile get() = File(dir, "vod_streams.json")
+    private val catFile get() = File(dir, "${pfx}_cats.json")
+    private val strFile get() = File(dir, "${pfx}_streams.json")
     fun cacheAgeMs() = (if (idxFile.exists()) idxFile else strFile).let { if (it.exists()) System.currentTimeMillis() - it.lastModified() else Long.MAX_VALUE }
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
-    private fun api(action: String) = "${prefs.server}/player_api.php?username=${enc(prefs.user)}&password=${enc(prefs.pass)}&action=$action"
-    fun movieUrl(m: Movie) = "${prefs.server}/movie/${enc(prefs.user)}/${enc(prefs.pass)}/${m.id}.${m.ext}"
+    protected fun api(action: String) = "${prefs.server}/player_api.php?username=${enc(prefs.user)}&password=${enc(prefs.pass)}&action=$action"
+    fun movieUrl(m: Movie) = "${prefs.server}/${if (m.ep) "series" else "movie"}/${enc(prefs.user)}/${enc(prefs.pass)}/${m.id}.${m.ext}"
 
-    private fun open(url: String): HttpURLConnection {
+    protected fun open(url: String): HttpURLConnection {
         val c = URL(url).openConnection() as HttpURLConnection
         c.connectTimeout = 15000; c.readTimeout = 60000
         c.setRequestProperty("User-Agent", "ChannelDeck/0.1")
@@ -80,7 +83,7 @@ class VodRepo(ctx: Context, private val prefs: Prefs) {
         if (!tmp.renameTo(to)) throw RuntimeException("could not save ${to.name}")
     }
 
-    private val idxFile get() = File(dir, "vod_index.tsv")
+    private val idxFile get() = File(dir, "${pfx}_index.tsv")
 
     /** Fast path: the compact index written after the last download. Falls back to (and migrates from) the raw JSON of older versions. */
     suspend fun loadCache(): Boolean = withContext(Dispatchers.IO) {
@@ -97,11 +100,11 @@ class VodRepo(ctx: Context, private val prefs: Prefs) {
 
     /** Download categories + the movie list; the list is parsed while it arrives (progress = films seen so far). */
     suspend fun refresh(progress: (Int) -> Unit = {}) = withContext(Dispatchers.IO) {
-        download(api("get_vod_categories"), catFile)
+        download(api(if (series) "get_series_categories" else "get_vod_categories"), catFile)
         val labels = readLabels()
-        val c = open(api("get_vod_streams"))
+        val c = open(api(if (series) "get_series" else "get_vod_streams"))
         val all = try { JsonReader(InputStreamReader(c.inputStream.buffered(64 * 1024), "UTF-8")).use { parse(it, labels, progress) } } finally { c.disconnect() }
-        if (all.isEmpty()) throw RuntimeException("the provider returned no movies")
+        if (all.isEmpty()) throw RuntimeException("the provider returned no ${unit}")
         writeIdx(all); strFile.delete()
         finish(all, labels)
     }
@@ -124,21 +127,23 @@ class VodRepo(ctx: Context, private val prefs: Prefs) {
         val all = ArrayList<Movie>(32000)
         r.beginArray()
         while (r.hasNext()) {
-            var id = ""; var name = ""; var icon = ""; var rating = 0f; var cat = ""; var ext = "mp4"; var added = 0L
+            var id = ""; var name = ""; var icon = ""; var rating = 0f; var cat = ""; var ext = "mp4"; var added = 0L; var rel = ""
             r.beginObject()
             while (r.hasNext()) when (r.nextName()) {
-                "stream_id" -> id = str(r)
+                "stream_id", "series_id" -> id = str(r)
                 "name" -> name = str(r)
-                "stream_icon" -> icon = str(r)
+                "stream_icon", "cover" -> icon = str(r)
                 "rating" -> rating = str(r).toFloatOrNull() ?: 0f
                 "category_id" -> cat = str(r)
                 "container_extension" -> ext = str(r).ifEmpty { "mp4" }
-                "added" -> added = str(r).toLongOrNull() ?: 0L
+                "added", "last_modified" -> added = str(r).toLongOrNull() ?: 0L
+                "releaseDate", "release_date" -> rel = str(r)
                 else -> r.skipValue()
             }
             r.endObject()
             if (id.isEmpty()) continue
-            val (title, year) = cleanTitle(name)
+            val (title, y0) = cleanTitle(name)
+            val year = y0.ifEmpty { if (series) rel.take(4).takeIf { it.length == 4 && it.all { c -> c.isDigit() } } ?: "" else "" }
             all.add(Movie(id, title, year, cat, icon, rating, ext, added, name.startsWith("4K", true) || (labels[cat] ?: "").contains("4K")))
             if (progress != null && all.size % 1500 == 0) progress(all.size)
         }
@@ -182,6 +187,7 @@ class VodRepo(ctx: Context, private val prefs: Prefs) {
     /** "EN - Black Adam  (2022)" -> ("Black Adam", "2022"); also strips "4K-NF - ", "TOP - ", "D+ - " style provider prefixes. */
     private fun cleanTitle(raw: String): Pair<String, String> {
         var t = Neon.plain(raw).replace(Regex("^(?:4K-)?[A-Za-z0-9+]{1,5}\\s+-\\s+"), "")
+        if (series) while (true) { val n = t.replace(Regex("\\s*\\([A-Za-z]{2,3}\\)\\s*$"), ""); if (n == t) break; t = n }     // trailing country tags: "(TW)"
         var year = ""
         Regex("\\((\\d{4})\\)\\s*$").find(t)?.let { year = it.groupValues[1]; t = t.substring(0, it.range.first) }
         return t.replace(Regex("\\s+"), " ").trim().ifEmpty { raw } to year
@@ -219,14 +225,14 @@ class VodRepo(ctx: Context, private val prefs: Prefs) {
     }
 
     // ---- resume positions: id -> "pos,dur,ts" (ms, ms, epoch s)
-    private val prog: MutableMap<String, String> by lazy {
+    protected val prog: MutableMap<String, String> by lazy {
         val m = HashMap<String, String>()
         try { val o = JSONObject(sp.getString("prog", "{}") ?: "{}"); o.keys().forEach { m[it] = o.getString(it) } } catch (e: Exception) {}
         m
     }
     fun progress(id: String): Pair<Long, Long>? = prog[id]?.split(",")?.let { if (it.size == 3) Pair(it[0].toLongOrNull() ?: 0L, it[1].toLongOrNull() ?: 0L) else null }
-    fun fraction(id: String): Float = progress(id)?.let { (p, d) -> if (d > 0) (p.toFloat() / d).coerceIn(0f, 1f) else 0f } ?: 0f
-    fun saveProgress(m: Movie, pos: Long, dur: Long) {
+    open fun fraction(id: String): Float = progress(id)?.let { (p, d) -> if (d > 0) (p.toFloat() / d).coerceIn(0f, 1f) else 0f } ?: 0f
+    open fun saveProgress(m: Movie, pos: Long, dur: Long) {
         if (dur <= 0 || pos < 0) return
         if (pos > dur * 0.95 || dur - pos < 90_000) prog.remove(m.id)           // finished
         else if (pos < 30_000) { if (!prog.containsKey(m.id)) return }           // barely started: do not clutter the list
@@ -235,7 +241,7 @@ class VodRepo(ctx: Context, private val prefs: Prefs) {
         sp.edit().putString("prog", JSONObject(prog as Map<*, *>).toString()).apply()
     }
     fun forget(id: String) { if (prog.remove(id) != null) sp.edit().putString("prog", JSONObject(prog as Map<*, *>).toString()).apply() }
-    fun continueList(): List<Movie> = prog.entries.sortedByDescending { it.value.substringAfterLast(',').toLongOrNull() ?: 0L }.mapNotNull { byId[it.key] }
+    open fun continueList(): List<Movie> = prog.entries.sortedByDescending { it.value.substringAfterLast(',').toLongOrNull() ?: 0L }.mapNotNull { byId[it.key] }
 
     /** Plot, genre, cast… for the detail card. */
     private val infoCache = HashMap<String, VodInfo>()
@@ -323,7 +329,7 @@ class PosterCard(ctx: Context, private val pw: Int, private val ph: Int) : Linea
 
 /** Movies: categories on the left, poster grid on the right, detail card on top. Uses normal D-pad focus. */
 class MoviesView(ctx: Context, private val vod: VodRepo, val cb: Cb) : FrameLayout(ctx) {
-    interface Cb { fun play(m: Movie, fromStart: Boolean); fun search(); fun close(); fun loadInfo(m: Movie, done: (VodInfo?) -> Unit) }
+    interface Cb { fun play(m: Movie, fromStart: Boolean); fun search(); fun close(); fun loadInfo(m: Movie, done: (VodInfo?) -> Unit); fun loadSeries(m: Movie, done: (SeriesInfo?) -> Unit) {} }
 
     private val d = ctx.resources.displayMetrics.density
     private fun dp(v: Int) = (v * d).toInt()
@@ -335,7 +341,7 @@ class MoviesView(ctx: Context, private val vod: VodRepo, val cb: Cb) : FrameLayo
     private var items: List<Movie> = emptyList()
     private var pw = 0; private var ph = 0
     private var selectJob: Runnable? = null
-    private var detail: DetailPanel? = null
+    private var detail: FrameLayout? = null
     private val content = LinearLayout(ctx)
     private var returnPos = -1
     private var lastGridPos = 0                 // poster that had focus last, so RIGHT from the categories returns to it
@@ -409,7 +415,7 @@ class MoviesView(ctx: Context, private val vod: VodRepo, val cb: Cb) : FrameLayo
         content.orientation = LinearLayout.HORIZONTAL; content.clipChildren = false
         // left column
         val left = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-        left.addView(TextView(ctx).apply { text = "Movies"; setTextColor(Neon.TEXT); textSize = 30f; typeface = Typeface.create("sans-serif-light", Typeface.NORMAL); setPadding(dp(14), 0, 0, dp(2)) })
+        left.addView(TextView(ctx).apply { text = vod.label; setTextColor(Neon.TEXT); textSize = 30f; typeface = Typeface.create("sans-serif-light", Typeface.NORMAL); setPadding(dp(14), 0, 0, dp(2)) })
         left.addView(TextView(ctx).apply { text = "ALL CATEGORIES"; setTextColor(Neon.CYAN); textSize = 12f; letterSpacing = 0.2f; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); setPadding(dp(14), dp(10), 0, dp(6)) })
         catRv.apply { layoutManager = LinearLayoutManager(ctx); adapter = catAdapter; itemAnimator = null; overScrollMode = View.OVER_SCROLL_NEVER; clipToPadding = true; setPadding(0, 0, dp(6), dp(40)); isVerticalFadingEdgeEnabled = true; setFadingEdgeLength(dp(40)); isFocusable = false; descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS }
         left.addView(catRv, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -459,9 +465,9 @@ class MoviesView(ctx: Context, private val vod: VodRepo, val cb: Cb) : FrameLayo
         gridAdapter.notifyDataSetChanged()
         (grid.layoutManager as GridLayoutManager).scrollToPositionWithOffset(0, 0)
         headTitle.text = vod.catName(id)
-        headCount.text = if (items.isEmpty()) "" else "${fmtCount(items.size)} films"
+        headCount.text = if (items.isEmpty()) "" else "${fmtCount(items.size)} ${vod.unit}"
         showMessage(if (items.isNotEmpty()) null else when (id) {
-            VodRepo.FIND -> if (vod.searchQ.isEmpty()) "Press OK or ▶ to search by title" else "No film matches “${vod.searchQ}”"
+            VodRepo.FIND -> if (vod.searchQ.isEmpty()) "Press OK or ▶ to search by title" else "No ${if (vod.unit == "films") "film" else "series"} matches “${vod.searchQ}”"
             else -> "Nothing here yet" })
     }
 
@@ -503,11 +509,12 @@ class MoviesView(ctx: Context, private val vod: VodRepo, val cb: Cb) : FrameLayo
     // ---- detail
     fun openDetail(m: Movie) {
         detail?.let { removeView(it) }            // never stack panels (e.g. returning from playback)
-        val p = DetailPanel(context, m, vod, cb, this); detail = p
+        val p: FrameLayout = if (vod is SeriesRepo) SeriesPanel(context, m, vod, cb) else DetailPanel(context, m, vod, cb, this)
+        detail = p
         content.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
         addView(p, LayoutParams(-1, -1)); p.alpha = 0f; p.animate().alpha(1f).setDuration(180).start()
-        p.focusPrimary()
-        cb.loadInfo(m) { info -> if (detail === p) p.bindInfo(info) }
+        if (p is SeriesPanel) cb.loadSeries(m) { si -> if (detail === p) p.bind(si) }
+        else if (p is DetailPanel) { p.focusPrimary(); cb.loadInfo(m) { info -> if (detail === p) p.bindInfo(info) } }
     }
     /** Returns true when it consumed BACK. */
     fun handleBack(): Boolean { if (detail != null) { closeDetail(); return true }; return false }
