@@ -660,6 +660,7 @@ class MainActivity : Activity() {
     }
 
     // ---------------------------------------------------------------- keys
+    private var navRv: RecyclerView? = null; private var navPos = -1
     private fun focusedIn(rv: RecyclerView): Int {
         val f = currentFocus ?: return -1
         return if (f.parent === rv) rv.getChildAdapterPosition(f) else -1
@@ -704,6 +705,22 @@ class MainActivity : Activity() {
                     val n = repo.channels(gid).size
                     hideOverlay(); startSurvey(gid, 6); flashBanner("Checking $n channels for a live picture – BACK to stop")
                     return true
+                }
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
+                    // Up/Down never leave the list you are in and never wrap: stop at the first/last row.
+                    // Position is tracked here (not only via currentFocus) because a fast scroll can recycle the focused row.
+                    val d = if (e.keyCode == KeyEvent.KEYCODE_DPAD_UP) -1 else 1
+                    var rv: RecyclerView? = null; var p = -1
+                    for (r in listOf(regionRv, groupRv, chanRv)) { val q = focusedIn(r); if (q >= 0) { rv = r; p = q; break } }
+                    if (rv == null) { rv = navRv; p = navPos }
+                    if (rv != null && p >= 0) {
+                        val t = (p + d).coerceIn(0, ((rv.adapter?.itemCount ?: 1) - 1).coerceAtLeast(0))
+                        navRv = rv; navPos = t
+                        val h = rv.findViewHolderForAdapterPosition(t)
+                        if (h != null) h.itemView.requestFocus() else focusPos(rv, t)
+                        resetHide()
+                        return true
+                    }
                 }
                 KeyEvent.KEYCODE_BACK -> { hideOverlay(); return true }
                 KeyEvent.KEYCODE_MENU -> {
