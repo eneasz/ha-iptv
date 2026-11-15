@@ -1,0 +1,10 @@
+name: Feature request
+description: Suggest an improvement to the app or the integration
+body:
+  - type: markdown
+    attributes:
+      value: "Player/integration features only. Requests involving specific providers, playlists or content will be closed."
+  - type: textarea
+    id: idea
+    attributes: {label: What would you like, and why?}
+    validations: {required: true}

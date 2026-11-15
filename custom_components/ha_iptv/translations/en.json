@@ -1,0 +1,328 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "HA IPTV",
+        "description": "Token: set it once on the stick with `adb shell am start -n pl.home.channeldeck/.MainActivity --es token YOURTOKEN`.",
+        "data": {
+          "host": "Fire TV IP",
+          "port": "Port",
+          "token": "Access token"
+        }
+      },
+      "launch": {
+        "title": "Wake-up (optional)",
+        "description": "To start the app or wake the TV from HA when it is closed, pick the Android TV (ADB) media player of the stick and the TV.",
+        "data": {
+          "adb_entity": "Fire TV (androidtv) entity",
+          "tv_entity": "TV media player",
+          "turn_off_tv": "Turn off also switches TV off"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate",
+        "data": {
+          "token": "Access token"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "The app did not answer. Open HA IPTV on the stick (TV on) and check IP/port.",
+      "invalid_auth": "Token rejected."
+    },
+    "abort": {
+      "already_configured": "Already configured",
+      "reauth_successful": "Token updated"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Wake-up",
+        "data": {
+          "adb_entity": "Fire TV (androidtv) entity",
+          "tv_entity": "TV media player",
+          "turn_off_tv": "Turn off also switches TV off"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "channel": {
+        "name": "Channel"
+      },
+      "group": {
+        "name": "Group"
+      },
+      "region": {
+        "name": "Region"
+      },
+      "now": {
+        "name": "Now playing"
+      },
+      "next": {
+        "name": "Up next"
+      },
+      "ends_at": {
+        "name": "Programme ends"
+      },
+      "resolution": {
+        "name": "Resolution"
+      },
+      "quality": {
+        "name": "Measured quality"
+      },
+      "survey": {
+        "name": "Survey progress"
+      }
+    },
+    "binary_sensor": {
+      "connected": {
+        "name": "App reachable"
+      },
+      "quality_mismatch": {
+        "name": "Quality mismatch"
+      },
+      "stream_problem": {
+        "name": "Stream problem"
+      }
+    },
+    "select": {
+      "region": {
+        "name": "Region"
+      },
+      "group": {
+        "name": "Group"
+      }
+    },
+    "button": {
+      "channel_up": {
+        "name": "Channel up"
+      },
+      "channel_down": {
+        "name": "Channel down"
+      },
+      "show_info": {
+        "name": "Show info"
+      },
+      "toggle_favourite": {
+        "name": "Toggle favourite"
+      },
+      "reload": {
+        "name": "Reload channel list"
+      }
+    },
+    "calendar": {
+      "guide": {
+        "name": "TV guide"
+      }
+    }
+  },
+  "selector": {
+    "watch_action": {
+      "options": {
+        "tune": "Tune in",
+        "event": "Only fire event"
+      }
+    }
+  },
+  "services": {
+    "play_channel": {
+      "name": "Play channel",
+      "description": "Tune to a channel by id or by name search; optionally prefer a group.",
+      "fields": {
+        "query": {
+          "name": "Search text",
+          "description": "Search text"
+        },
+        "channel_id": {
+          "name": "Channel ID",
+          "description": "Channel ID"
+        },
+        "group": {
+          "name": "Group",
+          "description": "Group"
+        }
+      }
+    },
+    "zap": {
+      "name": "Zap",
+      "description": "Next or previous channel within the current group/favourites.",
+      "fields": {
+        "delta": {
+          "name": "Direction",
+          "description": "Direction"
+        }
+      }
+    },
+    "set_region": {
+      "name": "Set region",
+      "description": "Browse to a region (e.g. UK, PL); optionally start its first channel.",
+      "fields": {
+        "region": {
+          "name": "Region",
+          "description": "Region"
+        },
+        "play": {
+          "name": "Start playing",
+          "description": "Start playing"
+        }
+      }
+    },
+    "set_group": {
+      "name": "Set group",
+      "description": "Browse to a group by id or name; optionally start its first channel.",
+      "fields": {
+        "group": {
+          "name": "Group",
+          "description": "Group"
+        },
+        "play": {
+          "name": "Start playing",
+          "description": "Start playing"
+        }
+      }
+    },
+    "favourite": {
+      "name": "Favourite",
+      "description": "Add/remove/toggle a channel in Favourites (default: the playing one).",
+      "fields": {
+        "channel_id": {
+          "name": "Channel ID",
+          "description": "Channel ID"
+        },
+        "on": {
+          "name": "On",
+          "description": "On"
+        }
+      }
+    },
+    "watch_programme": {
+      "name": "Watch programme",
+      "description": "When a programme matching the title starts, tune in (or just fire an event).",
+      "fields": {
+        "title": {
+          "name": "Programme title contains",
+          "description": "Programme title contains"
+        },
+        "channel_id": {
+          "name": "Channel ID",
+          "description": "Channel ID"
+        },
+        "group": {
+          "name": "Group",
+          "description": "Group"
+        },
+        "action": {
+          "name": "Action",
+          "description": "Action"
+        },
+        "lead_minutes": {
+          "name": "Lead time",
+          "description": "Lead time"
+        },
+        "once": {
+          "name": "Only once",
+          "description": "Only once"
+        }
+      }
+    },
+    "remove_watch": {
+      "name": "Remove watch",
+      "description": "Delete a programme watch by id or title.",
+      "fields": {
+        "watch": {
+          "name": "Watch ID or title",
+          "description": "Watch ID or title"
+        }
+      }
+    },
+    "list_watches": {
+      "name": "List watches",
+      "description": "Return all programme watches."
+    },
+    "sleep_timer": {
+      "name": "Sleep timer",
+      "description": "Stop playback after N minutes (0 cancels).",
+      "fields": {
+        "minutes": {
+          "name": "Minutes",
+          "description": "Minutes"
+        },
+        "turn_off_tv": {
+          "name": "Also turn off TV",
+          "description": "Also turn off TV"
+        }
+      }
+    },
+    "survey_group": {
+      "name": "Survey group quality",
+      "description": "Tune every channel in a group briefly to measure its real resolution.",
+      "fields": {
+        "group": {
+          "name": "Group",
+          "description": "Group"
+        },
+        "seconds": {
+          "name": "Seconds per channel",
+          "description": "Seconds per channel"
+        }
+      }
+    },
+    "stop_survey": {
+      "name": "Stop survey",
+      "description": "Abort a running quality survey."
+    },
+    "quality_report": {
+      "name": "Quality report",
+      "description": "Claimed vs measured quality for a group's channels.",
+      "fields": {
+        "group": {
+          "name": "Group",
+          "description": "Group"
+        },
+        "only_mismatches": {
+          "name": "Only mismatches",
+          "description": "Only mismatches"
+        }
+      }
+    },
+    "search_channels": {
+      "name": "Search channels",
+      "description": "Search all channels by name.",
+      "fields": {
+        "query": {
+          "name": "Search text",
+          "description": "Search text"
+        },
+        "limit": {
+          "name": "Limit",
+          "description": "Limit"
+        },
+        "group": {
+          "name": "Group",
+          "description": "Group"
+        }
+      }
+    },
+    "get_guide": {
+      "name": "Get guide",
+      "description": "Programme list for a channel.",
+      "fields": {
+        "channel_id": {
+          "name": "Channel ID",
+          "description": "Channel ID"
+        },
+        "query": {
+          "name": "Search text",
+          "description": "Search text"
+        },
+        "limit": {
+          "name": "Limit",
+          "description": "Limit"
+        }
+      }
+    }
+  }
+}

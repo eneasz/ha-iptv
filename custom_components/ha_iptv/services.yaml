@@ -1,0 +1,59 @@
+play_channel:
+  fields:
+    query: {selector: {text: {}}}
+    channel_id: {selector: {text: {}}}
+    group: {selector: {text: {}}}
+zap:
+  fields:
+    delta:
+      default: 1
+      selector: {select: {options: [{value: "1", label: "Next"}, {value: "-1", label: "Previous"}]}}
+set_region:
+  fields:
+    region: {required: true, selector: {text: {}}}
+    play: {default: false, selector: {boolean: {}}}
+set_group:
+  fields:
+    group: {required: true, selector: {text: {}}}
+    play: {default: false, selector: {boolean: {}}}
+favourite:
+  fields:
+    channel_id: {selector: {text: {}}}
+    "on": {selector: {boolean: {}}}
+watch_programme:
+  fields:
+    title: {required: true, selector: {text: {}}}
+    channel_id: {selector: {text: {}}}
+    group: {selector: {text: {}}}
+    action:
+      default: tune
+      selector: {select: {options: [tune, event], translation_key: watch_action}}
+    lead_minutes: {default: 0, selector: {number: {min: 0, max: 120, unit_of_measurement: min}}}
+    once: {default: true, selector: {boolean: {}}}
+remove_watch:
+  fields:
+    watch: {required: true, selector: {text: {}}}
+list_watches:
+sleep_timer:
+  fields:
+    minutes: {required: true, selector: {number: {min: 0, max: 720, unit_of_measurement: min}}}
+    turn_off_tv: {default: false, selector: {boolean: {}}}
+survey_group:
+  fields:
+    group: {selector: {text: {}}}
+    seconds: {default: 6, selector: {number: {min: 1, max: 30, unit_of_measurement: s}}}
+stop_survey:
+quality_report:
+  fields:
+    group: {required: true, selector: {text: {}}}
+    only_mismatches: {default: false, selector: {boolean: {}}}
+search_channels:
+  fields:
+    query: {required: true, selector: {text: {}}}
+    limit: {default: 20, selector: {number: {min: 1, max: 100}}}
+    group: {selector: {text: {}}}
+get_guide:
+  fields:
+    channel_id: {selector: {text: {}}}
+    query: {selector: {text: {}}}
+    limit: {default: 8, selector: {number: {min: 1, max: 30}}}

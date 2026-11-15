@@ -1,0 +1,29 @@
+name: Bug report
+description: Something in the app or the Home Assistant integration does not work
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This project is a player app and a Home Assistant integration only. It does not provide, sell or recommend any IPTV service, playlist or content.**
+        Do **not** post provider names, URLs, playlists, usernames, passwords or tokens. Such issues will be closed and deleted. Questions about where to get channels will not be answered.
+  - type: dropdown
+    id: part
+    attributes:
+      label: Which part?
+      options: [Android app, Home Assistant integration, Both / not sure]
+    validations: {required: true}
+  - type: textarea
+    id: what
+    attributes: {label: What happened, and what did you expect?}
+    validations: {required: true}
+  - type: textarea
+    id: steps
+    attributes: {label: Steps to reproduce}
+  - type: input
+    id: versions
+    attributes: {label: "Versions (app, integration, HA, device)"}
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs (remove any server addresses and credentials first)
+      render: text

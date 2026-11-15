@@ -1,0 +1,990 @@
+package pl.home.channeldeck
+
+import android.app.Activity
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
+import android.os.Bundle
+import android.text.InputType
+import android.view.Gravity
+import android.view.KeyEvent
+import android.view.View
+import android.view.ViewGroup
+import android.view.WindowManager
+import android.widget.Button
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ImageView
+import android.widget.TextView
+import androidx.media3.common.C
+import androidx.media3.common.Tracks
+import coil.dispose
+import coil.load
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.concurrent.Callable
+import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
+
+class MainActivity : Activity() {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private lateinit var prefs: Prefs
+    private lateinit var repo: Repo
+
+    private lateinit var root: FrameLayout
+    private lateinit var playerView: PlayerView
+    private lateinit var overlay: LinearLayout
+    private lateinit var hint: TextView
+    private lateinit var banner: TextView
+    private lateinit var status: TextView
+    private lateinit var groupRv: RecyclerView
+    private lateinit var regionRv: RecyclerView
+    private lateinit var regionAdapter: RowAdapter<Region>
+    private var browseRegion = ""
+    private var moveRegion = false
+    private var moveSnapshotR: List<Region> = emptyList()
+    private val regionGroup = HashMap<String, String>()   // last group viewed per region
+    private lateinit var chanRv: RecyclerView
+    private lateinit var groupAdapter: RowAdapter<Group>
+    private lateinit var chanAdapter: RowAdapter<Channel>
+    private var player: ExoPlayer? = null
+
+    private var browseGroup: String = ""          // group whose channels are listed
+    private var playing: Channel? = null
+    private var triedAltFormat = false
+    private var netRetries = 0
+    private var sampleJob: Job? = null
+    private var picture = "ok"          // ok | black | frozen (sampled from the video surface)
+    private var recoveries = 0          // automatic restarts of the current channel after a stall/freeze
+    private var retryJob: Job? = null
+    private var movingIdx = -1
+    private var moveSnapshot: List<Group> = emptyList()
+    private var dataReady = false
+    private var hideJob: Job? = null
+    private var bannerJob: Job? = null
+    private lateinit var infoPanel: InfoPanel
+    private lateinit var detailPanel: InfoPanel
+    private var infoJob: Job? = null
+    private var epgJob: Job? = null
+    private var detailJob: Job? = null
+    private var measureJob: Job? = null
+    private var tech: Tech? = null
+    private var measuring = false
+    private var playEpg: List<Prog>? = null
+    private var playEpgLoading = false
+    private var detailCh: Channel? = null
+    private var apiServer: ApiServer? = null
+    private var playCtx = ""                    // group (or favourites) the playing channel was chosen from; zap stays inside it
+    private var stopped = false
+    private var resumed = false
+    private var lastError: String? = null
+    private var errId = ""
+    private var pendingCmd: JSONObject? = null  // command that arrived before the channel list was ready
+    private var surveyJob: Job? = null
+    private var survey: Triple<String, Int, Int>? = null   // group id, done, total
+    private var boundaryJob: Job? = null
+    private val stateLock = Object()
+    private var stateVer = 0
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    // ---------------------------------------------------------------- lifecycle
+    override fun onCreate(b: Bundle?) {
+        super.onCreate(b)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        prefs = Prefs(this)
+        repo = Repo(prefs, filesDir)
+        buildUi()
+        applyIntentConfig(intent)
+        apiServer = ApiServer(8765, apiHost).also { it.start() }
+        startFlow()
+        handleIntentCmd(intent)
+    }
+
+    override fun onResume() { super.onResume(); resumed = true; changed() }
+    override fun onPause() { super.onPause(); resumed = false; changed() }
+
+    /** adb am start -n pl.home.channeldeck/.MainActivity --es server http://h:p --es user U --es pass P */
+    private fun applyIntentConfig(i: android.content.Intent?): Boolean {
+        i?.getStringExtra("token")?.let { prefs.token = it; i.removeExtra("token") }
+        val s = i?.getStringExtra("server") ?: return false
+        val u = i.getStringExtra("user") ?: return false
+        val p = i.getStringExtra("pass") ?: return false
+        prefs.server = s; prefs.user = u; prefs.pass = p
+        i.removeExtra("pass"); return true
+    }
+
+    override fun onNewIntent(intent: android.content.Intent?) {
+        super.onNewIntent(intent); setIntent(intent)
+        if (applyIntentConfig(intent)) { dataReady = false; playing = null; startFlow() }
+        handleIntentCmd(intent)
+    }
+
+    /** am start ... --es cmd play --es query "News One" [--es group PL] | cmd zap --ei delta 1 | cmd group --es group ... | cmd stop|pause|resume|info|home */
+    private fun handleIntentCmd(i: android.content.Intent?) {
+        val cmd = i?.getStringExtra("cmd") ?: return
+        val j = JSONObject().put("cmd", cmd)
+        for (k in listOf("channel_id", "query", "group", "region", "id")) i.getStringExtra(k)?.let { j.put(k, it) }
+        if (i.hasExtra("delta")) j.put("delta", i.getIntExtra("delta", 1))
+        if (i.hasExtra("play")) j.put("play", i.getBooleanExtra("play", false))
+        if (i.hasExtra("seconds")) j.put("seconds", i.getIntExtra("seconds", 6))
+        i.removeExtra("cmd")
+        if (dataReady) runCommand(j) else pendingCmd = j
+    }
+
+    override fun onStop() { super.onStop(); player?.pause() }
+    override fun onStart() { super.onStart(); player?.play() }
+    override fun onDestroy() { apiServer?.stop(); scope.cancel(); player?.release(); player = null; super.onDestroy() }
+
+    private fun startFlow() {
+        if (!prefs.configured) { showSetup(); return }
+        loadData()
+    }
+
+    // ---------------------------------------------------------------- UI
+    private fun rowBg(): StateListDrawable {
+        fun rr(c: Int) = GradientDrawable().apply { setColor(c); cornerRadius = dp(8).toFloat() }
+        return StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_focused), rr(Color.parseColor("#2EA3F2")))
+            addState(intArrayOf(android.R.attr.state_selected), rr(Color.parseColor("#44FFFFFF")))
+            addState(intArrayOf(), ColorDrawable(Color.TRANSPARENT))
+        }
+    }
+
+    private fun buildUi() {
+        root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        setContentView(root)
+
+        playerView = layoutInflater.inflate(R.layout.player_view, null) as PlayerView
+        root.addView(playerView, FrameLayout.LayoutParams(-1, -1))
+
+        banner = TextView(this).apply {
+            setTextColor(Color.WHITE); textSize = 22f; setPadding(dp(20), dp(12), dp(20), dp(12))
+            background = GradientDrawable().apply { setColor(Color.parseColor("#CC000000")); cornerRadius = dp(10).toFloat() }
+            visibility = View.GONE
+        }
+        root.addView(banner, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(40), dp(30), 0, 0) })
+
+        infoPanel = InfoPanel(this).apply { visibility = View.GONE }
+        root.addView(infoPanel, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(dp(40), 0, dp(40), dp(36)) })
+
+        status = TextView(this).apply {
+            setTextColor(Color.WHITE); textSize = 24f; gravity = Gravity.CENTER
+            setPadding(dp(60), dp(20), dp(60), dp(20))
+        }
+        root.addView(status, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+
+        // ----- overlay: groups | channels
+        overlay = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#E6101820")); visibility = View.GONE
+        }
+        val cols = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        regionAdapter = RowAdapter(
+            label = { it.name }, sub = { if (it.id == Repo.SEARCH) (if (repo.searchRes.isEmpty()) "" else repo.searchRes.size.toString()) else if (it.id == Repo.LIVE) it.channels.toString() else it.groups.toString() },
+            onClick = { onRegionClick(it) }, onLong = { startMove(it, true) }, onFocus = { onRegionFocus(it) })
+        regionRv = rv(regionAdapter)
+        groupAdapter = RowAdapter(
+            label = { repo.shortName(it) }, sub = { it.count.toString() },
+            onClick = { onGroupClick(it) }, onLong = { startMove(it) }, onFocus = { onGroupFocus(it) })
+        chanAdapter = RowAdapter(
+            label = { (if (repo.isFav(it.id)) "★ " else "") + it.name }, sub = { it.num.toString() },
+            onClick = { onChannelClick(it) }, onLong = { toggleFavAt(it) }, onFocus = { onChannelFocus(it) },
+            icon = { it.icon }, tag = { offTag(it) ?: Quality.rowTag(it.name, prefs.measured(it.id)) })
+        groupRv = rv(groupAdapter)
+        chanRv = rv(chanAdapter)
+        cols.addView(titled("REGIONS", regionRv), LinearLayout.LayoutParams(0, -1, 0.17f))
+        cols.addView(View(this).apply { setBackgroundColor(Color.parseColor("#33FFFFFF")) }, LinearLayout.LayoutParams(dp(1), -1))
+        cols.addView(titled("GROUPS", groupRv), LinearLayout.LayoutParams(0, -1, 0.33f))
+        cols.addView(View(this).apply { setBackgroundColor(Color.parseColor("#33FFFFFF")) }, LinearLayout.LayoutParams(dp(1), -1))
+        cols.addView(titled("CHANNELS", chanRv), LinearLayout.LayoutParams(0, -1, 0.50f))
+        overlay.addView(cols, LinearLayout.LayoutParams(-1, 0, 1f))
+        detailPanel = InfoPanel(this)
+        overlay.addView(detailPanel, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(12), dp(6), dp(12), dp(6)) })
+        hint = TextView(this).apply {
+            setTextColor(Color.parseColor("#AAFFFFFF")); textSize = 15f
+            setPadding(dp(20), dp(10), dp(20), dp(10))
+        }
+        overlay.addView(hint, LinearLayout.LayoutParams(-1, -2))
+        root.addView(overlay, FrameLayout.LayoutParams((resources.displayMetrics.widthPixels * 0.95f).toInt(), -1, Gravity.START))
+        setHint()
+    }
+
+    private fun titled(title: String, rv: RecyclerView): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        addView(TextView(context).apply {
+            text = title; setTextColor(Color.parseColor("#88FFFFFF")); textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD; setPadding(dp(20), dp(16), dp(20), dp(6))
+        })
+        addView(rv, LinearLayout.LayoutParams(-1, 0, 1f))
+    }
+
+    private fun rv(a: RecyclerView.Adapter<*>) = RecyclerView(this).apply {
+        layoutManager = LinearLayoutManager(context); adapter = a; itemAnimator = null
+        setPadding(dp(8), 0, dp(8), dp(8)); clipToPadding = false
+        isFocusable = false; descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+    }
+
+    private fun setHint(moving: Boolean = false) {
+        hint.text = if (moving) "MOVING GROUP   ▲▼ move   ◀ top   ▶ bottom   OK save   BACK cancel"
+        else "OK open · hold OK move/★ · MENU reload · FF/REW page · PLAY = check group live · BACK close"
+    }
+
+    // ---------------------------------------------------------------- setup (first run)
+    private fun showSetup() {
+        status.visibility = View.GONE
+        val form = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+            setBackgroundColor(Color.parseColor("#101820")); setPadding(dp(200), dp(60), dp(200), dp(40))
+        }
+        fun label(t: String) = TextView(this).apply { text = t; setTextColor(Color.WHITE); textSize = 18f }
+        fun field(h: String, pw: Boolean = false) = EditText(this).apply {
+            hint = h; setTextColor(Color.WHITE); setHintTextColor(Color.GRAY); textSize = 20f
+            inputType = InputType.TYPE_CLASS_TEXT or (if (pw) InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_TEXT_VARIATION_URI)
+            setSingleLine()
+        }
+        val s = field("http://host:port"); val u = field("username"); val p = field("password", true)
+        form.addView(label("HA IPTV – provider login")); form.addView(s); form.addView(u); form.addView(p)
+        form.addView(TextView(this).apply {
+            text = "Tip: can also be sent from a PC:  adb shell am start -n pl.home.channeldeck/.MainActivity --es server URL --es user U --es pass P"
+            setTextColor(Color.GRAY); textSize = 14f; setPadding(0, dp(10), 0, dp(10))
+        })
+        form.addView(Button(this).apply {
+            text = "Save"; setOnClickListener {
+                prefs.server = s.text.toString().trim(); prefs.user = u.text.toString().trim(); prefs.pass = p.text.toString().trim()
+                root.removeView(form); loadData()
+            }
+        })
+        root.addView(form, FrameLayout.LayoutParams(-1, -1))
+    }
+
+    // ---------------------------------------------------------------- data
+    private fun loadData() {
+        status.visibility = View.VISIBLE; status.text = "Loading channels…"
+        scope.launch {
+            val cached = repo.loadCache()
+            if (cached) applyData(firstTime = true)
+            try {
+                repo.refresh()
+                applyData(firstTime = !cached)
+            } catch (e: Exception) {
+                if (!cached) status.text = "Could not load channels:\n${e.message}\n\nCheck server/login (push a new channeldeck.json) and reopen."
+            }
+        }
+    }
+
+    /** Rebuild the lists; on first call restore last group/channel and start playing. */
+    private fun applyData(firstTime: Boolean) {
+        if (repo.groups.isEmpty()) { status.text = "No channels returned by provider"; return }
+        dataReady = true
+        refreshLists()
+        if (firstTime) {
+            status.visibility = View.GONE
+            val veryFirst = prefs.lastChannel.isEmpty()
+            val gid = repo.groups.firstOrNull { it.id == prefs.lastGroup }?.id ?: repo.groups.first { !Repo.pseudo(it.id) }.id
+            browseGroup = gid
+            val last = repo.channel(prefs.lastChannel)?.takeIf { repo.inGroup(gid, it.id) }
+            val start = last ?: repo.channels(gid).firstOrNull()
+            showChannels(gid); playCtx = gid
+            scope.launch(Dispatchers.Default) { repo.warm() }
+            val pc = pendingCmd; pendingCmd = null
+            if (pc != null) runCommand(pc) else if (start != null) play(start, banner = true)
+            if (veryFirst && pc == null) showOverlay(focusGroups = true)   // very first launch
+        } else {
+            groupAdapter.activeIdx = repo.groups.indexOfFirst { it.id == browseGroup }
+            showChannels(browseGroup)
+        }
+    }
+
+    private fun showChannels(gid: String) {
+        browseGroup = gid
+        repo.groups.firstOrNull { it.id == gid }?.let { g ->
+            regionGroup[g.region] = gid
+            if (g.region != browseRegion) {
+                browseRegion = g.region; groupAdapter.setAll(repo.groupsIn(g.region))
+                val oldR = regionAdapter.activeIdx; val newR = regionAdapter.items.indexOfFirst { it.id == g.region }
+                regionAdapter.activeIdx = newR
+                if (oldR in regionAdapter.items.indices) regionAdapter.notifyItemChanged(oldR)
+                if (newR >= 0 && newR != oldR) regionAdapter.notifyItemChanged(newR)
+            }
+        }
+        val list = repo.channels(gid)
+        chanAdapter.setAll(list)
+        chanAdapter.activeIdx = list.indexOfFirst { it.id == playing?.id }
+        // rebind just the two affected rows: a full notifyDataSetChanged() would reset D-pad focus
+        val old = groupAdapter.activeIdx
+        val idx = groupAdapter.items.indexOfFirst { it.id == gid }
+        groupAdapter.activeIdx = idx
+        if (old >= 0 && old < groupAdapter.items.size) groupAdapter.notifyItemChanged(old)
+        if (idx >= 0 && idx != old) groupAdapter.notifyItemChanged(idx)
+    }
+
+    // ---------------------------------------------------------------- playback
+    private fun play(c: Channel, banner: Boolean = false, fmt: String = prefs.format, ctx: String? = null, retry: Boolean = false) {
+        playing = c; stopped = false; lastError = null
+        if (ctx != null) playCtx = ctx else if (playCtx.isEmpty() || !repo.inGroup(playCtx, c.id)) playCtx = c.groupId
+        tech = null; measuring = true; playEpg = null; playEpgLoading = c.epgId.isNotEmpty()
+        measureJob?.cancel(); epgJob?.cancel()
+        prefs.lastChannel = c.id; prefs.lastGroup = if (playCtx == Repo.SEARCH || playCtx == Repo.LIVE) c.groupId else playCtx
+        if (fmt == prefs.format && !retry) { triedAltFormat = false; netRetries = 0; retryJob?.cancel() }
+        if (!retry) recoveries = 0
+        sampleJob?.cancel(); if (picture != "ok") { picture = "ok"; changed() }
+        val p = player ?: ExoPlayer.Builder(this, Mp2RenderersFactory(this)).build().also { pl ->
+            player = pl; playerView.player = pl
+            pl.addListener(object : Player.Listener {
+                override fun onPlayerError(error: PlaybackException) {
+                    val c2 = playing ?: return
+                    // Network hiccups (provider allows 1 connection; a just-zapped stream may still be closing): retry with backoff first
+                    if (error.errorCode in 2000..2999 && error.errorCode != PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND && netRetries < 4) {
+                        val wait = longArrayOf(1500, 3000, 5000, 8000)[netRetries]; netRetries++
+                        status.visibility = View.VISIBLE; status.text = "Connection problem – retrying ($netRetries/4)…"
+                        retryJob?.cancel()
+                        retryJob = scope.launch { kotlinx.coroutines.delay(wait); if (playing?.id == c2.id) play(c2, fmt = prefs.format, retry = true) }
+                        return
+                    }
+                    if (!triedAltFormat) {
+                        triedAltFormat = true
+                        play(c2, fmt = if (prefs.format == "m3u8") "ts" else "m3u8")
+                    } else { status.visibility = View.VISIBLE; status.text = "Can't play ${c2.name}\n${error.errorCodeName}"; lastError = error.errorCodeName; errId = c2.id; changed() }
+                }
+                override fun onTracksChanged(tracks: Tracks) { readTech(tracks) }
+                override fun onIsPlayingChanged(isPlaying: Boolean) { changed() }
+                override fun onPlaybackStateChanged(state: Int) {
+                    changed()
+                    if (state == Player.STATE_READY) {
+                        status.visibility = View.GONE
+                        val cur = playing
+                        if (cur != null && triedAltFormat) { prefs.format = if (prefs.format == "m3u8") "ts" else "m3u8"; triedAltFormat = false }
+                    } else if (state == Player.STATE_BUFFERING) { status.visibility = View.VISIBLE; status.text = "…" }
+                }
+            })
+        }
+        p.setMediaItem(MediaItem.fromUri(repo.streamUrl(c, fmt))); p.prepare(); p.playWhenReady = true
+        chanAdapter.activeIdx = repo.channels(browseGroup).indexOfFirst { it.id == c.id }
+        chanAdapter.notifyDataSetChanged()
+        if (banner) showInfo()
+        changed()
+        epgJob = scope.launch {
+            val l = try { repo.epg(c) } catch (e: Exception) { emptyList() }
+            if (playing?.id != c.id) return@launch
+            playEpg = l; playEpgLoading = false; refreshInfo()
+        }
+    }
+
+    // ---------------------------------------------------------------- info card
+    private fun groupName(c: Channel) = repo.groups.firstOrNull { it.id == c.groupId }?.name ?: ""
+    private fun stateOf(c: Channel, l: List<Prog>?, loading: Boolean) = when {
+        loading -> EpgState.LOADING
+        c.epgId.isEmpty() -> EpgState.NO_GUIDE
+        l.isNullOrEmpty() -> EpgState.EMPTY
+        else -> EpgState.OK
+    }
+
+    private fun refreshInfo() {
+        val c = playing ?: return
+        infoPanel.bind(c, groupName(c), stateOf(c, playEpg, playEpgLoading), playEpg ?: emptyList(), tech, measuring)
+        if (overlay.visibility == View.VISIBLE && detailCh?.id == c.id) bindDetail(c)
+        changed()
+        val now = System.currentTimeMillis() / 1000
+        val next = playEpg?.flatMap { listOf(it.start, it.stop) }?.filter { it > now }?.minOrNull()
+        boundaryJob?.cancel()
+        if (next != null) boundaryJob = scope.launch { kotlinx.coroutines.delay((next - now + 1) * 1000); refreshInfo() }
+    }
+
+    private fun showInfo() {
+        refreshInfo(); infoPanel.visibility = View.VISIBLE
+        infoJob?.cancel(); infoJob = scope.launch { kotlinx.coroutines.delay(9000); infoPanel.visibility = View.GONE }
+    }
+
+    private fun bindDetail(c: Channel) {
+        detailCh = c
+        if (c.id == playing?.id) detailPanel.bind(c, groupName(c), stateOf(c, playEpg, playEpgLoading), playEpg ?: emptyList(), tech, measuring)
+        else {
+            val m = prefs.measured(c.id)
+            val t = m?.let { Tech(it[0], it[1], it[2], "", "", 0, it[1]) }
+            detailPanel.bind(c, groupName(c), EpgState.LOADING.takeIf { c.epgId.isNotEmpty() && detailEpg[c.id] == null } ?: stateOf(c, detailEpg[c.id], false),
+                detailEpg[c.id] ?: emptyList(), t, false)
+        }
+    }
+    private val detailEpg = HashMap<String, List<Prog>>()
+
+    private fun onChannelFocus(pos: Int) {
+        val c = chanAdapter.items.getOrNull(pos) ?: return
+        bindDetail(c)
+        detailJob?.cancel()
+        if (c.epgId.isNotEmpty() && c.id != playing?.id && detailEpg[c.id] == null) detailJob = scope.launch {
+            kotlinx.coroutines.delay(350)                       // debounce while scrolling
+            val l = try { repo.epg(c) } catch (e: Exception) { emptyList() } ?: emptyList()
+            detailEpg[c.id] = l
+            if (detailCh?.id == c.id) bindDetail(c)
+        }
+    }
+
+    // ---------------------------------------------------------------- stream measurement
+    private fun readTech(tr: Tracks) {
+        var vf: androidx.media3.common.Format? = null; var af: androidx.media3.common.Format? = null; var maxH = 0
+        for (g in tr.groups) for (i in 0 until g.length) {
+            if (g.type == C.TRACK_TYPE_VIDEO) { maxH = maxOf(maxH, g.getTrackFormat(i).height); if (g.isTrackSelected(i)) vf = g.getTrackFormat(i) }
+            if (g.type == C.TRACK_TYPE_AUDIO && g.isTrackSelected(i)) af = g.getTrackFormat(i)
+        }
+        val v = vf ?: return
+        if (v.width <= 0 || v.height <= 0) return
+        val declared = if (v.frameRate > 0) Math.round(v.frameRate) else 0
+        tech = Tech(v.width, v.height, declared, Quality.vcodec(v.sampleMimeType, v.codecs), Quality.acodec(af?.sampleMimeType), af?.channelCount?.takeIf { it > 0 } ?: 0, maxH)
+        val c = playing ?: return
+        prefs.setMeasured(c.id, v.width, v.height, declared)
+        chanAdapter.notifyDataSetChanged()
+        refreshInfo()
+        startFpsMeasure(c)
+        startPictureWatch(c)
+    }
+
+    /**
+     * Detects a channel that plays but shows nothing useful: samples a tiny copy of the video every 2 s.
+     * Black = every pixel almost black for ~20 s; frozen = identical picture for ~30 s (a still slate is also reported, it is still worth knowing).
+     */
+    private fun startPictureWatch(c: Channel) {
+        sampleJob?.cancel()
+        sampleJob = scope.launch {
+            val tv = playerView.videoSurfaceView as? android.view.TextureView ?: return@launch
+            var dark = 0; var same = 0; var last = 0L; var stuck = 0; var lastPos = -1L; var good = 0
+            while (true) {
+                kotlinx.coroutines.delay(2000)
+                val p = player ?: return@launch
+                if (playing?.id != c.id) return@launch
+                if (!p.isPlaying) { dark = 0; same = 0; stuck = 0; continue }
+                // anti-freeze: playback "running" but the position does not advance (decoder/audio stall) -> restart the stream
+                val pos = p.currentPosition
+                stuck = if (pos == lastPos) stuck + 1 else 0; lastPos = pos
+                if (stuck >= 4) { if (recover(c, "stalled")) return@launch else stuck = 0 }
+                val bmp = try { tv.getBitmap(48, 27) } catch (e: Exception) { null } ?: continue
+                val px = IntArray(48 * 27); bmp.getPixels(px, 0, 48, 0, 0, 48, 27); bmp.recycle()
+                var maxL = 0; var h = 1125899906842597L
+                for (v in px) { val l = ((v shr 16 and 255) * 3 + (v shr 8 and 255) * 6 + (v and 255)) / 10; if (l > maxL) maxL = l; h = 31 * h + (v and 0xF8F8F8) }
+                dark = if (maxL < 24) dark + 1 else 0
+                good = if (maxL >= 24) good + 1 else 0
+                if (good == 3) prefs.setPicture(c.id, "ok")
+                if (dark == 10) { prefs.setPicture(c.id, "black"); chanAdapter.notifyDataSetChanged() }
+                same = if (h == last) same + 1 else 0; last = h
+                if (same >= 8 && dark == 0 && recoveries < 2) { if (recover(c, "frozen")) return@launch }
+                val now = when { dark >= 10 -> "black"; same >= 8 && dark == 0 -> "frozen"; else -> "ok" }
+                if (now != picture) {
+                    picture = now; changed()
+                    if (now == "black") flashBanner("⚠ Black picture – the channel may be off air")
+                    if (now == "frozen") flashBanner("⚠ Picture frozen")
+                }
+            }
+        }
+    }
+
+    /** Restart the current channel after a stall/freeze (max 3 times per channel, then the problem is reported instead). */
+    private fun recover(c: Channel, why: String): Boolean {
+        if (playing?.id != c.id || recoveries >= 3) return false
+        recoveries++
+        flashBanner("Stream $why – restarting ($recoveries/3)")
+        play(c, fmt = prefs.format, retry = true)
+        return true
+    }
+
+    /** Frame rate is often not declared in TS/HLS: count rendered frames over a few seconds. */
+    private fun startFpsMeasure(c: Channel) {
+        measureJob?.cancel()
+        measureJob = scope.launch {
+            val p = player ?: return@launch
+            val dc = p.videoDecoderCounters ?: return@launch
+            kotlinx.coroutines.delay(2500); dc.ensureUpdated(); val n1 = dc.renderedOutputBufferCount; val t1 = System.nanoTime()
+            kotlinx.coroutines.delay(6000); dc.ensureUpdated(); val n2 = dc.renderedOutputBufferCount; val t2 = System.nanoTime()
+            if (playing?.id != c.id || n2 <= n1) return@launch
+            val fps = Math.round((n2 - n1) * 1e9 / (t2 - t1)).toInt()
+            val cur = tech ?: return@launch
+            val snapped = intArrayOf(24, 25, 30, 50, 60).minByOrNull { Math.abs(it - fps) }?.takeIf { Math.abs(it - fps) <= 3 } ?: fps
+            tech = cur.copy(fps = snapped); measuring = false
+            prefs.setMeasured(c.id, cur.w, cur.h, snapped); refreshInfo()
+        }
+    }
+
+    private fun zap(delta: Int) {
+        val cur = playing ?: return
+        var list = repo.channels(playCtx); if (list.none { it.id == cur.id }) list = repo.channels(cur.groupId)
+        if (list.isEmpty()) return
+        val i = list.indexOfFirst { it.id == cur.id }
+        play(list[(i + delta + list.size) % list.size], banner = true)
+    }
+
+    private fun flashBanner(text: String) {
+        banner.text = text; banner.visibility = View.VISIBLE
+        bannerJob?.cancel()
+        bannerJob = scope.launch { kotlinx.coroutines.delay(3500); banner.visibility = View.GONE }
+    }
+
+    // ---------------------------------------------------------------- overlay + lists
+    private fun showOverlay(focusGroups: Boolean) {
+        if (!dataReady) return
+        overlay.visibility = View.VISIBLE; infoPanel.visibility = View.GONE
+        refreshLists()   // picks up new ● Live entries
+        playing?.let { if (it.groupId == browseGroup) bindDetail(it) }
+        val gi = groupAdapter.items.indexOfFirst { it.id == browseGroup }.coerceAtLeast(0)
+        val ci = chanAdapter.items.indexOfFirst { it.id == playing?.id }.coerceAtLeast(0)
+        if (focusGroups) focusPos(groupRv, gi) else focusPos(chanRv, ci)
+        scrollTo(groupRv, gi); scrollTo(chanRv, ci); scrollTo(regionRv, regionAdapter.activeIdx.coerceAtLeast(0))
+        resetHide()
+    }
+
+    private fun hideOverlay() { overlay.visibility = View.GONE; hideJob?.cancel() }
+    private fun resetHide() { hideJob?.cancel(); hideJob = scope.launch { kotlinx.coroutines.delay(15000); if (movingIdx < 0) hideOverlay() } }
+    private fun scrollTo(rv: RecyclerView, pos: Int) { (rv.layoutManager as LinearLayoutManager).scrollToPositionWithOffset(pos, dp(120)) }
+
+    private fun focusPos(rv: RecyclerView, pos: Int, tries: Int = 8) {
+        scrollTo(rv, pos)
+        rv.post {
+            val h = rv.findViewHolderForAdapterPosition(pos)
+            if (h != null) h.itemView.requestFocus() else if (tries > 0) rv.postDelayed({ focusPos(rv, pos, tries - 1) }, 40)
+        }
+    }
+
+    private fun onRegionFocus(pos: Int) {
+        if (movingIdx >= 0) return
+        val r = regionAdapter.items.getOrNull(pos) ?: return
+        if (r.id == browseRegion || (r.id == Repo.SEARCH && repo.searchRes.isEmpty())) return
+        regionRv.post {
+            if (movingIdx >= 0 || r.id == browseRegion) return@post
+            val gs = repo.groupsIn(r.id); val target = gs.firstOrNull { it.id == regionGroup[r.id] } ?: gs.firstOrNull() ?: return@post
+            showChannels(target.id)
+        }
+    }
+
+    private fun promptSearch() {
+        val et = android.widget.EditText(this).apply {
+            setSingleLine(); hint = "channel name"; setText(repo.searchQ); setSelectAllOnFocus(true)
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH; setTextColor(Color.WHITE); setHintTextColor(Color.GRAY)
+        }
+        val dlg = android.app.AlertDialog.Builder(this).setTitle("Search channels").setView(et)
+            .setPositiveButton("Search") { _, _ -> doSearch(et.text.toString()) }
+            .setNegativeButton("Cancel", null).create()
+        et.setOnEditorActionListener { _, _, _ -> dlg.dismiss(); doSearch(et.text.toString()); true }
+        dlg.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+        dlg.show(); hideJob?.cancel()
+    }
+
+    private fun doSearch(q: String) {
+        flashBanner("Searching…")
+        scope.launch {
+            kotlinx.coroutines.withContext(Dispatchers.Default) { repo.runSearch(q) }
+            showSearchResult(q)
+        }
+    }
+
+    private fun showSearchResult(q: String) {
+        if (repo.searchRes.isEmpty()) { flashBanner(if (q.isBlank()) "Search cleared" else "No channel matches “${q.trim()}”"); refreshLists(); resetHide(); return }
+        browseGroup = Repo.SEARCH; refreshLists()
+        flashBanner("${repo.searchRes.size} channels for “${repo.searchQ}”")
+        focusPos(chanRv, 0); resetHide()
+    }
+
+    private fun onRegionClick(pos: Int) {
+        if (movingIdx >= 0) return
+        val r = regionAdapter.items.getOrNull(pos) ?: return
+        if (r.id == Repo.SEARCH) { promptSearch(); return }
+        if (r.id != browseRegion) onRegionFocus(pos)
+        regionRv.postDelayed({ focusPos(groupRv, groupAdapter.items.indexOfFirst { it.id == browseGroup }.coerceAtLeast(0)) }, 60)
+    }
+
+    private fun onGroupFocus(pos: Int) {
+        if (movingIdx >= 0) return
+        val g = groupAdapter.items.getOrNull(pos) ?: return
+        // focus can arrive mid-layout; RecyclerView forbids notifyDataSetChanged there
+        if (g.id != browseGroup) groupRv.post { if (movingIdx < 0 && g.id != browseGroup) showChannels(g.id) }
+    }
+
+    private fun onGroupClick(pos: Int) {
+        if (movingIdx >= 0) return
+        val g = groupAdapter.items.getOrNull(pos) ?: return
+        prefs.lastGroup = g.id
+        showChannels(g.id)
+        val i = chanAdapter.items.indexOfFirst { it.id == playing?.id }.let { if (it < 0) 0 else it }
+        focusPos(chanRv, i)
+    }
+
+    private fun onChannelClick(pos: Int) {
+        val c = chanAdapter.items.getOrNull(pos) ?: return
+        play(c, banner = true, ctx = browseGroup); hideOverlay()
+    }
+
+    // ---------------------------------------------------------------- move groups
+    private fun startMove(pos: Int, region: Boolean = false): Boolean {
+        if (movingIdx >= 0) return true
+        if (region && Repo.pseudo(regionAdapter.items.getOrNull(pos)?.id ?: "")) return true     // favourites/search stay on top
+        moveRegion = region; movingIdx = pos
+        if (region) { moveSnapshotR = regionAdapter.items.toList(); regionAdapter.movingIdx = pos; regionAdapter.notifyItemChanged(pos) }
+        else { moveSnapshot = groupAdapter.items.toList(); groupAdapter.movingIdx = pos; groupAdapter.notifyItemChanged(pos) }
+        setHint(true); hideJob?.cancel()
+        return true
+    }
+
+    private fun moveTo(target: Int) {
+        val n = if (moveRegion) regionAdapter.items.size else groupAdapter.items.size
+        val from = movingIdx; val to = target.coerceIn(if (moveRegion) regionAdapter.items.count { Repo.pseudo(it.id) } else 0, n - 1)
+        if (from < 0 || to == from) return
+        if (moveRegion) { regionAdapter.move(from, to); regionAdapter.movingIdx = to; regionAdapter.notifyItemChanged(to); focusPos(regionRv, to) }
+        else { groupAdapter.move(from, to); groupAdapter.movingIdx = to; groupAdapter.notifyItemChanged(to); focusPos(groupRv, to) }
+        movingIdx = to
+    }
+
+    private fun endMove(save: Boolean) {
+        val keep = movingIdx
+        if (moveRegion) { if (save) repo.saveRegionOrder(regionAdapter.items.toList()) else regionAdapter.setAll(moveSnapshotR); regionAdapter.movingIdx = -1 }
+        else { if (save) repo.saveRegionGroups(browseRegion, groupAdapter.items.toList()) else groupAdapter.setAll(moveSnapshot); groupAdapter.movingIdx = -1 }
+        movingIdx = -1
+        regionAdapter.activeIdx = regionAdapter.items.indexOfFirst { it.id == browseRegion }
+        groupAdapter.activeIdx = groupAdapter.items.indexOfFirst { it.id == browseGroup }
+        regionAdapter.notifyDataSetChanged(); groupAdapter.notifyDataSetChanged(); setHint(false); resetHide()
+        if (moveRegion) focusPos(regionRv, if (save) keep else regionAdapter.activeIdx.coerceAtLeast(0))
+        else focusPos(groupRv, if (save) keep else groupAdapter.activeIdx.coerceAtLeast(0))
+    }
+
+    // ---------------------------------------------------------------- keys
+    private fun focusedIn(rv: RecyclerView): Int {
+        val f = currentFocus ?: return -1
+        return if (f.parent === rv) rv.getChildAdapterPosition(f) else -1
+    }
+
+    override fun dispatchKeyEvent(e: KeyEvent): Boolean {
+        if (e.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(e)
+        val k = e.keyCode
+        if (surveyJob?.isActive == true && k == KeyEvent.KEYCODE_BACK) { stopSurvey(); return true }
+        if (overlay.visibility == View.VISIBLE) resetHide()
+
+        // ---- move mode owns the remote
+        if (movingIdx >= 0) {
+            when (k) {
+                KeyEvent.KEYCODE_DPAD_UP -> moveTo(movingIdx - 1)
+                KeyEvent.KEYCODE_DPAD_DOWN -> moveTo(movingIdx + 1)
+                KeyEvent.KEYCODE_DPAD_LEFT -> moveTo(0)
+                KeyEvent.KEYCODE_DPAD_RIGHT -> moveTo(100000)
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> if (e.repeatCount == 0) endMove(true)
+                KeyEvent.KEYCODE_BACK -> endMove(false)
+            }
+            return true
+        }
+
+        if (overlay.visibility == View.VISIBLE) {
+            when (k) {
+                KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, KeyEvent.KEYCODE_MEDIA_REWIND, KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_PAGE_DOWN -> {
+                    val down = k == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD || k == KeyEvent.KEYCODE_CHANNEL_DOWN || k == KeyEvent.KEYCODE_PAGE_DOWN
+                    for (rv in listOf(regionRv, groupRv, chanRv)) {
+                        val cur = focusedIn(rv); if (cur < 0) continue
+                        val n = rv.adapter?.itemCount ?: 0
+                        if (n > 0) { val to = (cur + if (down) 8 else -8).coerceIn(0, n - 1); focusPos(rv, to); scrollTo(rv, to) }
+                        break
+                    }
+                    return true
+                }
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                    val gp = focusedIn(groupRv)
+                    val gid = if (gp >= 0) groupAdapter.items.getOrNull(gp)?.id ?: browseGroup else browseGroup
+                    if (surveyJob?.isActive == true) { flashBanner("A check is already running"); return true }
+                    if (Repo.pseudo(gid) && gid == Repo.LIVE) { flashBanner("Pick a group or search results to check"); return true }
+                    val n = repo.channels(gid).size
+                    hideOverlay(); startSurvey(gid, 6); flashBanner("Checking $n channels for a live picture – BACK to stop")
+                    return true
+                }
+                KeyEvent.KEYCODE_BACK -> { hideOverlay(); return true }
+                KeyEvent.KEYCODE_MENU -> {
+                    val rp = focusedIn(regionRv); val gp = focusedIn(groupRv)
+                    if (rp >= 0) startMove(rp, true) else if (gp >= 0) startMove(gp) else scope.launch {
+                        flashBanner("Reloading…"); try { repo.refresh(); applyData(false); flashBanner("Channel list updated") }
+                        catch (ex: Exception) { flashBanner("Reload failed: ${ex.message}") }
+                    }
+                    return true
+                }
+            }
+            return super.dispatchKeyEvent(e)
+        }
+
+        // ---- full-screen video
+        when (k) {
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_CHANNEL_UP -> { zap(-1); return true }
+            KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CHANNEL_DOWN -> { zap(1); return true }
+            KeyEvent.KEYCODE_DPAD_LEFT -> { showOverlay(true); return true }
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_INFO ->
+                { if (infoPanel.visibility == View.VISIBLE && k != KeyEvent.KEYCODE_INFO) { infoPanel.visibility = View.GONE; showOverlay(false) } else showInfo(); return true }
+            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MENU -> { showOverlay(false); return true }
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { player?.let { if (it.isPlaying) it.pause() else it.play() }; return true }
+        }
+        return super.dispatchKeyEvent(e)
+    }
+
+    // ---------------------------------------------------------------- HA API (local HTTP) + commands
+    private fun changed() { synchronized(stateLock) { stateVer++; stateLock.notifyAll() } }
+
+    private fun <T> onUi(f: () -> T): T {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) return f()
+        val t = FutureTask(Callable { f() }); runOnUiThread(t); return t.get(15, TimeUnit.SECONDS)
+    }
+
+    private fun groupDisplay(gid: String) = repo.groups.firstOrNull { it.id == gid }?.name ?: ""
+    private fun techVerdict(c: Channel, t: Tech?) = Quality.verdict(c.name, t)
+
+    private fun chanJson(c: Channel): JSONObject {
+        val m = prefs.measured(c.id)
+        val o = JSONObject().put("id", c.id).put("num", c.num).put("name", c.name).put("icon", c.icon)
+            .put("group_id", c.groupId).put("group", groupDisplay(c.groupId)).put("region", repo.regionOfGroup(c.groupId)).put("epg_id", c.epgId).put("fav", repo.isFav(c.id))
+            .put("picture", prefs.picture(c.id)?.let { JSONObject().put("state", it.first).put("age", System.currentTimeMillis() / 1000 - it.second) } ?: JSONObject.NULL)
+        o.put("claimed", Quality.claimed(c.name).let { if (it == 0) JSONObject.NULL else Quality.short(it) })
+        if (m != null) {
+            val t = Tech(m[0], m[1], m[2], "", "", 0, m[1]); val v = techVerdict(c, t)
+            o.put("measured", JSONObject().put("w", m[0]).put("h", m[1]).put("fps", m[2]).put("label", Quality.short(Quality.actual(m[0], m[1])))
+                .put("mismatch", v != null && v.color == Quality.RED))
+        }
+        return o
+    }
+
+    private fun progJson(p: Prog?) = if (p == null) JSONObject.NULL else JSONObject().put("title", p.title).put("desc", p.desc).put("start", p.start).put("stop", p.stop)
+
+    private fun stateJson(): JSONObject {
+        val o = JSONObject().put("v", stateVer).put("app", "0.3").put("ready", dataReady).put("server_time", System.currentTimeMillis() / 1000)
+        val c = playing; val p = player
+        val power = when {
+            !resumed -> "background"; c == null || stopped || p == null -> "idle"
+            !p.playWhenReady -> "paused"; p.isPlaying -> "playing"; else -> "buffering"
+        }
+        o.put("power", power).put("error", lastError ?: JSONObject.NULL).put("picture", picture)
+        o.put("groups", repo.groups.size).put("channels", repo.groups.filter { !Repo.pseudo(it.id) }.sumOf { it.count })
+        if (c != null) {
+            o.put("channel", chanJson(c)).put("group_id", playCtx).put("group", groupDisplay(playCtx)).put("region", repo.regionOfGroup(playCtx))
+            val t = tech
+            if (t != null) {
+                val v = techVerdict(c, t)
+                o.put("tech", JSONObject().put("w", t.w).put("h", t.h).put("fps", t.fps).put("vcodec", t.vcodec).put("acodec", t.acodec).put("ach", t.ach)
+                    .put("max_h", t.maxH).put("label", Quality.label(Quality.actual(t.w, t.h))).put("short", Quality.short(Quality.actual(t.w, t.h)))
+                    .put("mismatch", v != null && v.color == Quality.RED).put("verdict", v?.text ?: ""))
+            }
+            val now = System.currentTimeMillis() / 1000
+            val l = playEpg ?: emptyList()
+            val cur = l.firstOrNull { it.start <= now && now < it.stop }
+            val nxt = l.firstOrNull { it.start > now }
+            o.put("epg_state", stateOf(c, playEpg, playEpgLoading).name.lowercase())
+            o.put("now", progJson(cur)).put("next", progJson(nxt))
+        }
+        survey?.let { o.put("survey", JSONObject().put("group", groupDisplay(it.first)).put("group_id", it.first).put("done", it.second).put("total", it.third)) }
+        return o
+    }
+
+    private val apiHost = object : ApiHost {
+        override fun token() = prefs.token
+        override fun version() = synchronized(stateLock) { stateVer }
+        override fun waitChange(since: Int, timeoutMs: Long) {
+            synchronized(stateLock) { val end = System.currentTimeMillis() + timeoutMs
+                while (stateVer == since && System.currentTimeMillis() < end) stateLock.wait(maxOf(1, end - System.currentTimeMillis())) }
+        }
+        override fun state() = onUi { stateJson() }
+        override fun groups() = onUi { JSONArray().also { a -> repo.groups.forEach { a.put(JSONObject().put("id", it.id).put("name", it.name).put("count", it.count).put("region", it.region)) } } }
+        override fun regions() = onUi { JSONArray().also { a -> repo.regions.forEach { a.put(JSONObject().put("id", it.id).put("name", it.name).put("groups", it.groups).put("channels", it.channels)) } } }
+        override fun channels(group: String) = onUi { JSONArray().also { a -> repo.channels(group).take(3000).forEach { a.put(chanJson(it)) } } }
+        override fun search(q: String, limit: Int, group: String?) = onUi { JSONArray().also { a -> repo.search(q, limit.coerceIn(1, 100), group).forEach { a.put(chanJson(it)) } } }
+        override fun epg(ids: List<String>, limit: Int): JSONObject {
+            val chans = onUi { ids.mapNotNull { repo.channel(it) } }
+            val out = JSONObject()
+            runBlocking(Dispatchers.IO) {
+                for (c in chans) {
+                    val l = try { repo.epg(c, limit.coerceIn(1, 30)) } catch (e: Exception) { null } ?: emptyList()
+                    out.put(c.id, JSONArray().also { a -> l.forEach { a.put(progJson(it)) } })
+                }
+            }
+            return out
+        }
+        override fun quality(group: String) = onUi {
+            JSONArray().also { a -> repo.channels(group).forEach { c ->
+                val m = prefs.measured(c.id)
+                val v = m?.let { techVerdict(c, Tech(it[0], it[1], it[2], "", "", 0, it[1])) }
+                a.put(chanJson(c).put("verdict", when { m == null -> "unknown"; v != null && v.color == Quality.RED -> "mismatch"; else -> "ok" }).put("verdict_text", v?.text ?: ""))
+            } }
+        }
+        override fun command(c: JSONObject) = onUi { runCommand(c) }
+    }
+
+    private fun runCommand(j: JSONObject): JSONObject {
+        val ok = JSONObject().put("ok", true)
+        fun err(m: String) = JSONObject().put("ok", false).put("error", m)
+        if (!dataReady && j.optString("cmd") != "refresh") { pendingCmd = j; return JSONObject().put("ok", true).put("queued", true) }
+        return when (val cmd = j.optString("cmd")) {
+            "play" -> {
+                val gh = j.optString("group").takeIf { it.isNotEmpty() }
+                val ch = j.optString("channel_id").takeIf { it.isNotEmpty() }?.let { repo.channel(it) }
+                    ?: j.optString("query").takeIf { it.isNotEmpty() }?.let { q -> repo.search(q, 1, gh).firstOrNull() ?: repo.search(q, 1).firstOrNull() }
+                if (ch == null) return err("no matching channel")
+                val ctx = gh?.let { repo.resolveGroup(it)?.id }?.takeIf { repo.inGroup(it, ch.id) }
+                hideOverlay(); play(ch, banner = true, ctx = ctx); ok.put("channel", chanJson(ch))
+            }
+            "zap" -> { zap(j.optInt("delta", 1)); ok }
+            "group" -> {
+                val g = repo.resolveGroup(j.optString("group").ifEmpty { j.optString("id") }) ?: return err("no matching group")
+                browseGroup = g.id; showChannels(g.id); prefs.lastGroup = g.id
+                if (j.optBoolean("play", false)) repo.channels(g.id).firstOrNull()?.let { hideOverlay(); play(it, banner = true, ctx = g.id) }
+                changed(); ok.put("group", g.name)
+            }
+            "region" -> {
+                val r = repo.resolveRegion(j.optString("region").ifEmpty { j.optString("id") }) ?: return err("no matching region")
+                val gs = repo.groupsIn(r.id); val g = gs.firstOrNull { it.id == regionGroup[r.id] } ?: gs.firstOrNull() ?: return err("region is empty")
+                showChannels(g.id); prefs.lastGroup = g.id
+                if (j.optBoolean("play", false)) repo.channels(g.id).firstOrNull()?.let { hideOverlay(); play(it, banner = true, ctx = g.id) }
+                changed(); ok.put("region", r.name).put("group", g.name)
+            }
+            "stop" -> { player?.stop(); stopped = true; infoPanel.visibility = View.GONE; changed(); ok }
+            "pause" -> { player?.pause(); changed(); ok }
+            "resume" -> { if (stopped) playing?.let { play(it, banner = true) } else player?.play(); changed(); ok }
+            "info" -> { showInfo(); ok }
+            "home" -> { moveTaskToBack(true); ok }
+            "refresh" -> { scope.launch { try { repo.refresh(); applyData(false); changed() } catch (e: Exception) { flashBanner("Reload failed: ${e.message}") } }; ok }
+            "favourite" -> {
+                val id = j.optString("channel_id").ifEmpty { playing?.id ?: "" }
+                if (repo.channel(id) == null) return err("unknown channel")
+                repo.setFav(id, if (j.has("on")) j.getBoolean("on") else null); refreshLists(); changed(); ok.put("fav", repo.isFav(id))
+            }
+            "survey" -> {
+                val g = repo.resolveGroup(j.optString("group").ifEmpty { playCtx }) ?: return err("no matching group")
+                startSurvey(g.id, j.optInt("seconds", 6)); ok.put("group", g.name).put("total", repo.channels(g.id).size)
+            }
+            "survey_stop" -> { stopSurvey(); ok }
+            else -> err("unknown command '$cmd'")
+        }
+    }
+
+    private fun refreshLists() {
+        if (repo.groups.none { it.id == browseGroup }) browseGroup = repo.groups.first { !Repo.pseudo(it.id) }.id
+        val g = repo.groups.first { it.id == browseGroup }
+        browseRegion = g.region
+        // only touch the adapters when something changed: notifyDataSetChanged() drops D-pad focus
+        val rs = repo.regions; if (regionAdapter.items != rs) regionAdapter.setAll(rs)
+        regionAdapter.activeIdx = regionAdapter.items.indexOfFirst { it.id == browseRegion }
+        val gs = repo.groupsIn(browseRegion); if (groupAdapter.items != gs) groupAdapter.setAll(gs)
+        groupAdapter.activeIdx = groupAdapter.items.indexOfFirst { it.id == browseGroup }
+        showChannels(browseGroup)
+    }
+
+    private fun toggleFavAt(pos: Int): Boolean {
+        val c = chanAdapter.items.getOrNull(pos) ?: return false
+        val now = !repo.isFav(c.id)
+        repo.setFav(c.id, now); refreshLists(); changed()
+        flashBanner(if (now) "★ Added to favourites: ${c.name}" else "Removed from favourites: ${c.name}")
+        focusPos(chanRv, pos.coerceAtMost(chanAdapter.items.size - 1).coerceAtLeast(0))
+        return true
+    }
+
+    // ---------------------------------------------------------------- quality survey
+    /** Tunes each channel of a group in turn and records the real resolution (one stream at a time: the account allows one). */
+    private fun startSurvey(gid: String, secs: Int) {
+        surveyJob?.cancel()
+        val list = repo.channels(gid); if (list.isEmpty()) return
+        val back = playing; val backCtx = playCtx
+        surveyJob = scope.launch {
+            try {
+                survey = Triple(gid, 0, list.size); changed()
+                list.forEachIndexed { i, ch ->
+                    banner.text = "Quality survey ${i + 1}/${list.size} · ${ch.name} · BACK to stop"; banner.visibility = View.VISIBLE; bannerJob?.cancel()
+                    play(ch, ctx = gid)
+                    var waited = 0
+                    while (tech == null && errId != ch.id && waited < 15000) { kotlinx.coroutines.delay(250); waited += 250 }
+                    if (errId == ch.id) prefs.setPicture(ch.id, "error")
+                    else {
+                        var shown = false; val dwell = secs.coerceIn(2, 30) * 1000L / 3
+                        repeat(3) { kotlinx.coroutines.delay(dwell); if (maxLuma() >= 24) shown = true }
+                        prefs.setPicture(ch.id, if (shown) "ok" else "black")
+                    }
+                    survey = Triple(gid, i + 1, list.size); changed()
+                }
+            } finally {
+                survey = null; banner.visibility = View.GONE
+                val liveN = list.count { prefs.picture(it.id)?.first == "ok" }; val offN = list.count { prefs.picture(it.id)?.first.let { s -> s == "black" || s == "error" } }
+                back?.let { play(it, ctx = backCtx) }
+                refreshLists(); flashBanner("Check done: $liveN live, $offN off air – see ● Live")
+                changed()
+            }
+        }
+    }
+    /** Brightest pixel (0-255) of a tiny copy of the current video frame, -1 if unavailable. */
+    private fun maxLuma(): Int {
+        val tv = playerView.videoSurfaceView as? android.view.TextureView ?: return -1
+        val bmp = try { tv.getBitmap(48, 27) } catch (e: Exception) { null } ?: return -1
+        val px = IntArray(48 * 27); bmp.getPixels(px, 0, 48, 0, 0, 48, 27); bmp.recycle()
+        var m = 0; for (v in px) { val l = ((v shr 16 and 255) * 3 + (v shr 8 and 255) * 6 + (v and 255)) / 10; if (l > m) m = l }
+        return m
+    }
+
+    private fun offTag(c: Channel): Pair<String, Int>? {
+        val p = prefs.picture(c.id) ?: return null
+        val fresh = System.currentTimeMillis() / 1000 - p.second < 6 * 3600
+        return if (fresh && (p.first == "black" || p.first == "error")) Pair("OFF", Color.parseColor("#FF9F0A")) else null
+    }
+
+    private fun stopSurvey() { surveyJob?.cancel(); surveyJob = null }
+
+    // ---------------------------------------------------------------- adapter
+    inner class RowAdapter<T>(
+        val label: (T) -> String, val sub: (T) -> String,
+        val onClick: (Int) -> Unit, val onLong: ((Int) -> Boolean)?, val onFocus: ((Int) -> Unit)?,
+        val icon: ((T) -> String)? = null, val tag: ((T) -> Pair<String, Int>?)? = null
+    ) : RecyclerView.Adapter<RowAdapter<T>.VH>() {
+        var items: MutableList<T> = ArrayList()
+        var activeIdx = -1
+        var movingIdx = -1
+        fun setAll(l: List<T>) { items = ArrayList(l); notifyDataSetChanged() }
+        fun move(from: Int, to: Int) { val x = items.removeAt(from); items.add(to, x); notifyItemMoved(from, to) }
+
+        inner class VH(v: LinearLayout, val name: TextView, val count: TextView, val logo: ImageView?, val tagView: TextView) : RecyclerView.ViewHolder(v)
+
+        override fun onCreateViewHolder(p: ViewGroup, t: Int): VH {
+            val row = LinearLayout(p.context).apply {
+                orientation = LinearLayout.HORIZONTAL; isFocusable = true; isClickable = true
+                background = rowBg(); setPadding(dp(14), dp(10), dp(14), dp(10))
+                layoutParams = RecyclerView.LayoutParams(-1, -2).apply { setMargins(0, dp(2), 0, dp(2)) }
+            }
+            val logo = if (icon != null) ImageView(p.context).apply {
+                scaleType = ImageView.ScaleType.FIT_CENTER; setPadding(dp(3), dp(3), dp(3), dp(3))
+                background = GradientDrawable().apply { setColor(Color.parseColor("#22FFFFFF")); cornerRadius = dp(6).toFloat() }
+            } else null
+            if (logo != null) row.addView(logo, LinearLayout.LayoutParams(dp(54), dp(40)).apply { rightMargin = dp(12); gravity = Gravity.CENTER_VERTICAL })
+            val tagTv = TextView(p.context).apply { textSize = 14f; setTypeface(null, Typeface.BOLD); setPadding(dp(10), 0, 0, 0) }
+            val n = TextView(p.context).apply { setTextColor(Color.WHITE); textSize = 20f; setSingleLine(); ellipsize = android.text.TextUtils.TruncateAt.END }
+            val c = TextView(p.context).apply { setTextColor(Color.parseColor("#99FFFFFF")); textSize = 16f; setPadding(dp(12), 0, 0, 0) }
+            row.addView(n, LinearLayout.LayoutParams(0, -2, 1f)); row.addView(tagTv, LinearLayout.LayoutParams(-2, -2)); row.addView(c, LinearLayout.LayoutParams(-2, -2))
+            row.gravity = Gravity.CENTER_VERTICAL
+            val vh = VH(row, n, c, logo, tagTv)
+            row.setOnClickListener { val i = vh.bindingAdapterPosition; if (i >= 0) onClick(i) }
+            row.setOnLongClickListener { val i = vh.bindingAdapterPosition; i >= 0 && onLong?.invoke(i) == true }
+            row.setOnFocusChangeListener { _, f -> if (f) { val i = vh.bindingAdapterPosition; if (i >= 0) onFocus?.invoke(i) } }
+            return vh
+        }
+
+        override fun onBindViewHolder(h: VH, i: Int) {
+            val it = items[i]
+            h.name.text = (if (i == movingIdx) "⇅  " else "") + label(it); h.count.text = sub(it)
+            h.itemView.isSelected = i == activeIdx
+            val tg = tag?.invoke(it); h.tagView.text = tg?.first ?: ""; if (tg != null) h.tagView.setTextColor(tg.second)
+            val url = icon?.invoke(it)
+            if (h.logo != null) { if (!url.isNullOrEmpty()) h.logo.load(url) { size(108, 80); crossfade(false) } else { h.logo.dispose(); h.logo.setImageDrawable(null) } }
+            h.name.setTypeface(null, if (i == activeIdx || i == movingIdx) Typeface.BOLD else Typeface.NORMAL)
+            h.itemView.setBackgroundColor(Color.TRANSPARENT)
+            h.itemView.background = if (i == movingIdx) GradientDrawable().apply { setColor(Color.parseColor("#F2994A")); cornerRadius = dp(8).toFloat() } else rowBg()
+        }
+
+        override fun getItemCount() = items.size
+    }
+}
