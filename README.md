@@ -14,6 +14,7 @@ tests/              pytest-homeassistant-custom-component suite
 ```
 
 ## App
+- **Movies and Series** (Xtream VOD): categories, poster grid, "Recently added", "Continue watching", search ("Find"), film cards and a show card with season tabs and episodes. Remembers where you stopped, plays the next episode by itself, shows the real stream quality (4K / FHD / HD / SD, codec, audio) and has an audio and subtitle picker (MENU).
 - Regions (text before `|` in group names: UK, IE, PL…) → groups → channels; reorderable at both levels (hold OK / MENU), remembers last position.
 - Plays MP2 audio even on devices without an MP2 decoder.
 - Anti-freeze: a stalled or frozen stream is restarted automatically (up to 3 times per channel).

@@ -1,0 +1,37 @@
+name: Release
+# Pushing a tag like v0.2.0 builds the app and publishes a GitHub release whose notes are the matching CHANGELOG.md section.
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag must match the integration version
+        run: |
+          v=$(python3 -c "import json;print(json.load(open('custom_components/ha_iptv/manifest.json'))['version'])")
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME != manifest v$v"; exit 1; }
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          awk -v v="$ver" '$0=="## "v {f=1; next} /^## /{f=0} f' CHANGELOG.md > notes.md
+          [ -s notes.md ] || { echo "::error::no CHANGELOG.md section '## $ver'"; exit 1; }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: "8.9" }
+      - name: Build the app
+        working-directory: android
+        run: gradle --no-daemon -q :app:assembleDebug
+      - name: Name the files
+        run: |
+          name=$(grep -o 'versionName = "[^"]*"' android/app/build.gradle.kts | cut -d'"' -f2)
+          cp android/app/build/outputs/apk/debug/app-debug.apk "ha-iptv-app-$name.apk"
+          (cd custom_components && zip -qr ../ha_iptv.zip ha_iptv -x '*/__pycache__/*')
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag ha-iptv-app-*.apk ha_iptv.zip
