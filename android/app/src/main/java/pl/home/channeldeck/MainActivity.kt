@@ -537,6 +537,7 @@ class MainActivity : Activity() {
     // ---------------------------------------------------------------- overlay + lists
     private fun showOverlay(focusGroups: Boolean) {
         if (!dataReady) return
+        focusLockUntil = android.os.SystemClock.uptimeMillis() + 700
         overlay.visibility = View.VISIBLE; infoPanel.visibility = View.GONE
         refreshLists()   // picks up new ● Live entries
         playing?.let { if (it.groupId == browseGroup) bindDetail(it) }
@@ -559,12 +560,15 @@ class MainActivity : Activity() {
         }
     }
 
+    /** While the overlay is (re)opening, lists get rebuilt and Android parks focus on the first row; ignore that so it cannot change what we browse. */
+    private var focusLockUntil = 0L
+    private fun focusLocked() = android.os.SystemClock.uptimeMillis() < focusLockUntil
     private fun onRegionFocus(pos: Int) {
-        if (movingIdx >= 0) return
+        if (movingIdx >= 0 || focusLocked()) return
         val r = regionAdapter.items.getOrNull(pos) ?: return
         if (r.id == browseRegion || (r.id == Repo.SEARCH && repo.searchRes.isEmpty())) return
         regionRv.post {
-            if (movingIdx >= 0 || r.id == browseRegion) return@post
+            if (movingIdx >= 0 || r.id == browseRegion || focusLocked()) return@post
             val gs = repo.groupsIn(r.id); val target = gs.firstOrNull { it.id == regionGroup[r.id] } ?: gs.firstOrNull() ?: return@post
             showChannels(target.id)
         }
@@ -607,10 +611,10 @@ class MainActivity : Activity() {
     }
 
     private fun onGroupFocus(pos: Int) {
-        if (movingIdx >= 0) return
+        if (movingIdx >= 0 || focusLocked()) return
         val g = groupAdapter.items.getOrNull(pos) ?: return
         // focus can arrive mid-layout; RecyclerView forbids notifyDataSetChanged there
-        if (g.id != browseGroup) groupRv.post { if (movingIdx < 0 && g.id != browseGroup) showChannels(g.id) }
+        if (g.id != browseGroup) groupRv.post { if (movingIdx < 0 && g.id != browseGroup && !focusLocked()) showChannels(g.id) }
     }
 
     private fun onGroupClick(pos: Int) {
@@ -722,7 +726,12 @@ class MainActivity : Activity() {
                         return true
                     }
                 }
-                KeyEvent.KEYCODE_BACK -> { hideOverlay(); return true }
+                KeyEvent.KEYCODE_BACK -> {
+                    // BACK steps back one view: first to the group that is playing, then to the picture
+                    if (playing != null && browseGroup != playCtx && repo.groups.any { it.id == playCtx }) { browseGroup = playCtx; showOverlay(false) }
+                    else hideOverlay()
+                    return true
+                }
                 KeyEvent.KEYCODE_MENU -> {
                     val rp = focusedIn(regionRv); val gp = focusedIn(groupRv)
                     if (rp >= 0) startMove(rp, true) else if (gp >= 0) startMove(gp) else scope.launch {
@@ -743,6 +752,11 @@ class MainActivity : Activity() {
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_INFO ->
                 { if (infoPanel.visibility == View.VISIBLE && k != KeyEvent.KEYCODE_INFO) { infoPanel.visibility = View.GONE; showOverlay(false) } else showInfo(); return true }
             KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MENU -> { showOverlay(false); return true }
+            KeyEvent.KEYCODE_BACK -> {
+                // from the picture BACK returns to the list you came from (leave the app with HOME)
+                if (infoPanel.visibility == View.VISIBLE) { infoPanel.visibility = View.GONE; return true }
+                if (dataReady) { if (playing != null && repo.groups.any { it.id == playCtx }) browseGroup = playCtx; showOverlay(false); return true }
+            }
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { player?.let { if (it.isPlaying) it.pause() else it.play() }; return true }
         }
         return super.dispatchKeyEvent(e)
@@ -962,7 +976,18 @@ class MainActivity : Activity() {
         var items: MutableList<T> = ArrayList()
         var activeIdx = -1
         var movingIdx = -1
-        fun setAll(l: List<T>) { items = ArrayList(l); notifyDataSetChanged() }
+        /** Updates rows in place (never notifyDataSetChanged) so a list that holds D-pad focus keeps it. */
+        fun setAll(l: List<T>) {
+            val old = items; val nw = ArrayList(l)
+            var p = 0; while (p < old.size && p < nw.size && old[p] == nw[p]) p++
+            var sfx = 0; while (sfx < old.size - p && sfx < nw.size - p && old[old.size - 1 - sfx] == nw[nw.size - 1 - sfx]) sfx++
+            val oldMid = old.size - p - sfx; val newMid = nw.size - p - sfx
+            items = nw
+            val common = minOf(oldMid, newMid)
+            if (common > 0) notifyItemRangeChanged(p, common)
+            if (oldMid > newMid) notifyItemRangeRemoved(p + common, oldMid - newMid)
+            else if (newMid > oldMid) notifyItemRangeInserted(p + common, newMid - oldMid)
+        }
         fun move(from: Int, to: Int) { val x = items.removeAt(from); items.add(to, x); notifyItemMoved(from, to) }
 
         inner class VH(v: LinearLayout, val name: TextView, val count: TextView, val logo: ImageView?, val tagView: TextView) : RecyclerView.ViewHolder(v)
