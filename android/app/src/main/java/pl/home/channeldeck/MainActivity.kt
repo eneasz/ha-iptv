@@ -331,7 +331,7 @@ class MainActivity : Activity() {
         pairPanel?.let { root.removeView(it) }
         fun close(approve: Boolean) {
             pairing.decide(r, approve, prefs.token)
-            if (approve) { prefs.paired = true; prefs.pairOpenUntil = 0L; flashBanner("Home Assistant connected") }
+            if (approve) { prefs.paired = true; prefs.pairOpenUntil = 0L; if (setupForm != null && !prefs.configured) setupApproved() else flashBanner("Home Assistant connected") }
             pairPanel?.let { root.removeView(it) }; pairPanel = null
         }
         val box = LinearLayout(this).apply {
@@ -340,48 +340,104 @@ class MainActivity : Activity() {
         }
         fun t(x: String, sz: Float, c: Int) = TextView(this).apply { text = x; textSize = sz; setTextColor(c); gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(8)) }
         box.addView(t("Home Assistant wants to connect", 26f, Color.WHITE))
-        box.addView(t(r.code, 64f, Neon.CYAN).apply { typeface = Typeface.MONOSPACE; letterSpacing = 0.2f })
-        box.addView(t("Approve only if Home Assistant shows the same code.", 18f, Color.LTGRAY))
+        box.addView(t(r.code, 110f, Neon.CYAN).apply { typeface = Typeface.MONOSPACE; letterSpacing = 0.25f })
+        box.addView(t("Approve only if Home Assistant shows the same code. Expires in 2 minutes.", 22f, Color.parseColor("#B8C0CC")))
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, dp(20), 0, 0) }
-        val ok = Button(this).apply { text = "Approve"; setOnClickListener { close(true) } }
+        val ok = Button(this).apply { text = "Approve"; isEnabled = false; setOnClickListener { close(true) } }
         val no = Button(this).apply { text = "Deny"; setOnClickListener { close(false) } }
-        row.addView(ok); row.addView(no); box.addView(row)
-        pairPanel = box; root.addView(box, FrameLayout.LayoutParams(-1, -1)); ok.requestFocus()
+        row.addView(no); row.addView(ok); box.addView(row)
+        pairPanel = box; root.addView(box, FrameLayout.LayoutParams(-1, -1)); no.requestFocus()
+        scope.launch { kotlinx.coroutines.delay(1500); ok.isEnabled = true }       // a stray OK press must not approve
         scope.launch { kotlinx.coroutines.delay(Pairing.TTL); if (pairPanel === box) { pairing.poll(r.id, r.ha); pairPanel?.let { root.removeView(it) }; pairPanel = null } }
     }
 
-    private var setupForm: View? = null
-    private fun showSetup() {
-        status.visibility = View.GONE
-        val form = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
-            setBackgroundColor(Color.parseColor("#101820")); setPadding(dp(160), dp(40), dp(160), dp(30))
-        }
-        fun label(t: String, sz: Float = 18f, c: Int = Color.WHITE) = TextView(this).apply { text = t; setTextColor(c); textSize = sz }
-        fun field(h: String, pw: Boolean = false) = EditText(this).apply {
-            hint = h; setTextColor(Color.WHITE); setHintTextColor(Color.GRAY); textSize = 20f
-            inputType = InputType.TYPE_CLASS_TEXT or (if (pw) InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_TEXT_VARIATION_URI)
-            setSingleLine()
-        }
-        form.addView(label("HA IPTV – set up this TV", 26f))
-        form.addView(label("Waiting for Home Assistant…", 22f, Neon.CYAN).apply { setPadding(0, dp(14), 0, dp(6)) })
-        form.addView(label("In Home Assistant open  Settings › Devices & services  and click Configure on “HA IPTV – ${prefs.sync.deviceName}”. A code will appear on both screens: press OK here when they match.", 17f, Color.LTGRAY))
-        form.addView(label("This TV: ${localIp() ?: "no network"}   ·   port 8765   ·   name: ${prefs.sync.deviceName}", 15f, Color.GRAY).apply { setPadding(0, dp(8), 0, 0) })
-        form.addView(label("If you already use HA IPTV on another TV, Home Assistant copies the provider login for you.", 15f, Color.GRAY).apply { setPadding(0, dp(2), 0, dp(14)) })
-        form.addView(label("Or type the provider login here", 16f, Color.LTGRAY))
-        val s = field("http://host:port"); val u = field("username"); val p = field("password", true)
-        form.addView(s); form.addView(u); form.addView(p)
-        form.addView(Button(this).apply {
-            text = "Save"; setOnClickListener {
-                prefs.server = s.text.toString().trim(); prefs.user = u.text.toString().trim(); prefs.pass = p.text.toString().trim()
-                if (prefs.configured) finishSetup()
-            }
-        })
-        setupForm = form
-        root.addView(form, FrameLayout.LayoutParams(-1, -1))
+    private var setupForm: FrameLayout? = null
+    private var setupJob: Job? = null
+    private val dim = Color.parseColor("#B8C0CC")
+
+    private fun showSetup() { status.visibility = View.GONE
+        val f = FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#0E141C")); setPadding(dp(96), dp(54), dp(96), dp(54)) }
+        setupForm = f; root.addView(f, FrameLayout.LayoutParams(-1, -1)); setupChoice() }
+
+    private fun txt(t: String, sz: Float, c: Int = Color.WHITE, bold: Boolean = false) = TextView(this).apply {
+        text = t; textSize = sz; setTextColor(c); if (bold) setTypeface(typeface, Typeface.BOLD) }
+    private fun screen(build: LinearLayout.() -> Unit): LinearLayout {
+        setupJob?.cancel()
+        val f = setupForm ?: return LinearLayout(this)
+        f.removeAllViews()
+        return LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; build(); f.addView(this, FrameLayout.LayoutParams(-1, -1)) }
+    }
+    private fun btn(label: String, primary: Boolean, go: () -> Unit) = Button(this).apply {
+        text = label; textSize = if (primary) 24f else 18f; isAllCaps = false; setOnClickListener { go() }
+        setPadding(dp(30), dp(14), dp(30), dp(14))
     }
 
-    private fun finishSetup() { setupForm?.let { root.removeView(it) }; setupForm = null; loadData() }
+    /** 1: how do you want to set this TV up? */
+    private fun setupChoice() { screen {
+        addView(txt("Set up this TV", 38f, bold = true))
+        addView(txt("Choose how to connect.", 22f, dim).apply { setPadding(0, dp(6), 0, dp(36)) })
+        val ha = btn("Set up with Home Assistant", true) { setupWaiting() }
+        addView(ha, LinearLayout.LayoutParams(-2, -2))
+        addView(txt("Recommended. No typing needed.", 18f, dim).apply { setPadding(dp(6), dp(8), 0, dp(40)) })
+        addView(btn("Enter provider details on this TV", false) { setupManual() }, LinearLayout.LayoutParams(-2, -2))
+        addView(txt("This TV is called “${prefs.sync.deviceName}”.", 16f, dim).apply { setPadding(0, dp(40), 0, 0) })
+        ha.requestFocus()
+    } }
+
+    /** 2: Home Assistant path – what to do over there. Hints appear if nothing happens. */
+    private fun setupWaiting() { var hint: TextView? = null
+        screen {
+            addView(txt("Waiting for Home Assistant…", 34f, Neon.CYAN, true))
+            addView(txt("1.  On your phone or computer, open Home Assistant.\n2.  Go to Settings, then Devices & services.\n3.  Find “HA IPTV – ${prefs.sync.deviceName}” and click Configure.", 24f).apply { setLineSpacing(0f, 1.25f); setPadding(0, dp(24), 0, dp(14)) })
+            addView(txt("A code will appear here and there. Press OK only if both codes match.", 20f, dim))
+            hint = txt("", 20f, Neon.YELLOW).apply { setPadding(0, dp(22), 0, 0) }; addView(hint)
+            addView(View(this@MainActivity), LinearLayout.LayoutParams(1, 0, 1f))
+            addView(txt("Details: ${localIp() ?: "no network"} · port 8765", 16f, dim).apply { setPadding(0, 0, 0, dp(14)) })
+            val back = btn("Back", false) { setupChoice() }; addView(back, LinearLayout.LayoutParams(-2, -2)); back.requestFocus()
+        }
+        val ip = localIp() ?: "this TV's IP"
+        setupJob = scope.launch {
+            kotlinx.coroutines.delay(60_000); hint?.text = "Not seeing it? Make sure Home Assistant is on the same Wi-Fi as this TV."
+            kotlinx.coroutines.delay(120_000); hint?.text = "Still nothing? In Home Assistant choose Add integration › HA IPTV and enter the IP $ip. Leave the token empty."
+        }
+    }
+
+    /** 3: typing the provider login with the remote – kept as small as possible. */
+    private fun setupManual() { screen {
+        addView(btn("‹ Back", false) { setupChoice() }, LinearLayout.LayoutParams(-2, -2))
+        addView(txt("Enter provider details", 34f, bold = true).apply { setPadding(0, dp(10), 0, dp(14)) })
+        fun field(h: String, pw: Boolean = false) = EditText(this@MainActivity).apply {
+            hint = h; setTextColor(Color.WHITE); setHintTextColor(Color.GRAY); textSize = 22f; setSingleLine()
+            inputType = InputType.TYPE_CLASS_TEXT or (if (pw) InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_TEXT_VARIATION_URI) }
+        val s = field("Server address, e.g. http://host:port"); val u = field("Username"); val p = field("Password", true)
+        addView(s); addView(u); addView(p)
+        addView(android.widget.CheckBox(this@MainActivity).apply { text = "Show password"; setTextColor(dim); textSize = 18f
+            setOnCheckedChangeListener { _, on -> p.inputType = InputType.TYPE_CLASS_TEXT or (if (on) InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD else InputType.TYPE_TEXT_VARIATION_PASSWORD); p.setSelection(p.text.length) } })
+        val save = btn("Save", true) {
+            prefs.server = s.text.toString().trim(); prefs.user = u.text.toString().trim(); prefs.pass = p.text.toString().trim()
+            if (prefs.configured) finishSetup() }
+        save.isEnabled = false
+        val w = object : android.text.TextWatcher {
+            override fun afterTextChanged(e: android.text.Editable?) { save.isEnabled = s.text.isNotBlank() && u.text.isNotBlank() && p.text.isNotBlank() }
+            override fun beforeTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
+            override fun onTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
+        }
+        s.addTextChangedListener(w); u.addTextChangedListener(w); p.addTextChangedListener(w)
+        addView(save, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(14) })
+        s.requestFocus()
+    } }
+
+    /** After Approve, while Home Assistant still asks for the name: the TV must not look stuck. */
+    private fun setupApproved() { screen {
+        addView(txt("Connected to Home Assistant", 38f, Neon.CYAN, true))
+        addView(txt("Finish setting up on your phone or computer.\nThis screen updates by itself.", 24f, Color.WHITE).apply { setLineSpacing(0f, 1.25f); setPadding(0, dp(24), 0, dp(30)) })
+        val back = btn("Cancel and start over", false) {
+            prefs.token = java.security.SecureRandom().let { r -> ByteArray(12).also { r.nextBytes(it) }.joinToString("") { "%02x".format(it) } }; prefs.paired = false
+            setupChoice() }
+        addView(back, LinearLayout.LayoutParams(-2, -2)); back.requestFocus()
+    } }
+
+    private fun finishSetup() { setupJob?.cancel(); setupForm?.let { root.removeView(it) }; setupForm = null; loadData() }
 
     private fun localIp(): String? = try {
         java.net.NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp && !it.isLoopback }
@@ -747,8 +803,8 @@ class MainActivity : Activity() {
         }
         val yieldRow = NeonRow(this, "Hand over playback", yieldText())
         yieldRow.setOnClickListener { sy.yieldToOthers = !sy.yieldToOthers; yieldRow.set(yieldText()) }
-        val pair = NeonRow(this, "Pair a new Home Assistant", "OK to allow pairing for 5 minutes")
-        pair.setOnClickListener { prefs.pairOpenUntil = System.currentTimeMillis() + 300_000; pair.set("Open for 5 minutes – click Configure in Home Assistant") }
+        val pair = NeonRow(this, "Allow pairing again", "OK to let a Home Assistant pair with this TV for 5 minutes")
+        pair.setOnClickListener { prefs.pairOpenUntil = System.currentTimeMillis() + 300_000; pair.set("Open for 5 minutes – now click Configure in Home Assistant") }
         val about = NeonRow(this, "About", "HA IPTV is a player only. It provides no channels, playlists or content – you bring your own subscription.")
         about.valueTv.setSingleLine(false)
         val panel = SettingsPanel(this, listOf(fmt, refresh, name, yieldRow, pair, api, about)) { }

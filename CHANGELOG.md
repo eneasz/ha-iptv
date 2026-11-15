@@ -1,8 +1,12 @@
 # Changelog
+## 0.4.1
+- The approved token is never lost: if the provider login cannot be copied the TV is still added and a notification says why. The login is now copied automatically (untick-style opt-out "Do not copy"), and only offered when the other TV runs app 0.6 or newer.
+- App 0.7: first start asks how to set up (Home Assistant or typing), numbered steps with hints if nothing happens, an "approved, finish in Home Assistant" screen, a large pairing code with Deny as the default button, "Allow pairing again" in Settings.
+
 ## 0.4.0
 - Add a new TV without typing: the stick announces itself (mDNS), Home Assistant offers it under Discovered, a 4-digit code is shown on both screens and you approve on the TV remote; the access token is handed over automatically.
 - Optionally copy the provider login from a TV that is already set up.
-- App 0.6: pairing prompt, "Pair a new Home Assistant" in Settings; paired sticks reject new pairing requests unless opened there.
+- App 0.6: pairing prompt, "Allow pairing again" in Settings; paired sticks reject new pairing requests unless opened there.
 
 ## 0.3.0
 App 0.5. **All your TVs stay in step**, and you can carry on watching in another room.

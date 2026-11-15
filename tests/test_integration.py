@@ -277,11 +277,11 @@ async def test_discovered_stick_copies_login(hass, api, entry):
     api.provision_set = AsyncMock(return_value={"ok": True})
     r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "zeroconf"}, data=_zc())
     r = await _approve(hass, api, r)
-    assert r["step_id"] == "launch" and "copy_login" in r["data_schema"].schema
-    r = await hass.config_entries.flow.async_configure(r["flow_id"], {"copy_login": True})
+    assert r["step_id"] == "launch" and "skip_copy" in r["data_schema"].schema
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {})
     assert r["type"] == "create_entry" and r["title"] == "Bedroom"
     api.provision_set.assert_awaited_once_with("http://p:80", "u", "pw")
-    assert "copy_login" not in r["options"]
+    assert "skip_copy" not in r["options"]
 
 
 async def test_discovered_stick_without_copy_or_source(hass, api):
@@ -294,7 +294,7 @@ async def test_discovered_stick_without_copy_or_source(hass, api):
     api.provision_set = AsyncMock()
     r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "zeroconf"}, data=_zc("5.6.7.9"))
     r = await _approve(hass, api, r)
-    assert "copy_login" not in r["data_schema"].schema          # nothing to copy from
+    assert "skip_copy" not in r["data_schema"].schema          # nothing to copy from
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {})
     assert r["type"] == "create_entry" and r["title"] == "Bedroom"
     api.provision_set.assert_not_awaited()
@@ -325,3 +325,22 @@ async def test_pair_closed(hass, api):
 def test_pair_code_matches_app_rule():
     from custom_components.ha_iptv.config_flow import pair_code
     assert len(pair_code("aa" * 8, "bb" * 8)) == 4 and pair_code("a" * 16, "b" * 16) != pair_code("a" * 16, "c" * 16)
+
+
+async def test_copy_failure_keeps_the_tv(hass, api, entry):
+    """An approved token must never be lost: the TV is added even when the login cannot be copied."""
+    from custom_components.ha_iptv.api import HaIptvError
+    await _setup(hass, entry)
+    new = {**copy.deepcopy(STATE), "configured": False}
+    async def _state(wait=None, timeout=25):
+        if wait is None:
+            return copy.deepcopy(new)
+        await _hold()
+    api.state.side_effect = _state
+    api.provision = AsyncMock(return_value={"configured": True})            # an old app answers without a login
+    api.provision_set = AsyncMock(side_effect=HaIptvError("x"))
+    r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "zeroconf"}, data=_zc("5.6.7.12"))
+    r = await _approve(hass, api, r)
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {})
+    assert r["type"] == "create_entry" and r["data"]["token"] == "tok123"
+    api.provision_set.assert_not_awaited()

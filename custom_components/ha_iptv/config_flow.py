@@ -7,6 +7,7 @@ import secrets
 from typing import Any
 
 import voluptuous as vol
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import callback
@@ -17,7 +18,7 @@ from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 from .api import HaIptvApi, HaIptvAuthError, HaIptvError
 from .const import CONF_ADB_ENTITY, CONF_DEVICE_NAME, CONF_TOKEN, CONF_TURN_OFF_TV, CONF_TV_ENTITY, DEFAULT_PORT, DOMAIN
 
-CONF_COPY_LOGIN = "copy_login"
+CONF_SKIP_COPY = "skip_copy"
 PAIR_WAIT = 125  # seconds; the stick gives up after 120
 
 
@@ -64,7 +65,7 @@ class HaIptvConfigFlow(ConfigFlow, domain=DOMAIN):
     def _login_source(self):
         """A set-up stick already in Home Assistant whose provider login can be copied to this one."""
         for key, coord in self.hass.data.get(DOMAIN, {}).items():
-            if key != "hub" and getattr(coord, "data", None) and coord.data.get("configured", True):
+            if key != "hub" and getattr(coord, "data", None) and coord.data.get("configured") is True:   # only app 0.6+ reports this and can hand out its login
                 return coord
         return None
 
@@ -152,25 +153,28 @@ class HaIptvConfigFlow(ConfigFlow, domain=DOMAIN):
         return await self.async_step_launch()
 
     async def async_step_launch(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Name + options. If another TV is set up, its provider login is copied automatically (opt-out)."""
         source = self._login_source() if self._state.get("configured", True) is False else None
-        errors: dict[str, str] = {}
         if user_input is not None:
             user_input = dict(user_input)
-            copy = user_input.pop(CONF_COPY_LOGIN, False)
-            if source is not None and copy:
+            skip = user_input.pop(CONF_SKIP_COPY, False)
+            title = (user_input.get(CONF_DEVICE_NAME) or "").strip() or self._name or f"HA IPTV ({self._data[CONF_HOST]})"
+            if source is not None and not skip:
                 try:
                     login = await source.api.provision()
-                    api = HaIptvApi(async_get_clientsession(self.hass), self._data[CONF_HOST], self._data[CONF_PORT], self._data[CONF_TOKEN])
-                    await api.provision_set(login.get("server", ""), login.get("user", ""), login.get("pass", ""))
-                except HaIptvError:
-                    errors["base"] = "copy_failed"
-            if not errors:
-                title = (user_input.get(CONF_DEVICE_NAME) or "").strip() or self._name or f"HA IPTV ({self._data[CONF_HOST]})"
-                return self.async_create_entry(title=title, data=self._data, options=user_input)
+                    if not login.get("server"):
+                        raise HaIptvError("the other TV's app is too old to share its login")
+                    await self._api(self._data[CONF_TOKEN]).provision_set(login["server"], login.get("user", ""), login.get("pass", ""))
+                except HaIptvError as err:
+                    # the approved token must never be lost: the TV is added anyway and the user is told what to do
+                    persistent_notification.async_create(
+                        self.hass, f"{title} was added, but its provider login could not be copied from {source.device_name or source.entry.title}: {err}. "
+                        "Turn the other TV on and re-add this one, or type the login on the TV.", title="HA IPTV", notification_id=f"ha_iptv_copy_{self.unique_id}")
+            return self.async_create_entry(title=title, data=self._data, options=user_input)
         schema = _extras({CONF_DEVICE_NAME: self._name})
         if source is not None:
-            schema = schema.extend({vol.Required(CONF_COPY_LOGIN, default=True): bool})
-        return self.async_show_form(step_id="launch", data_schema=schema, errors=errors,
+            schema = schema.extend({vol.Optional(CONF_SKIP_COPY, default=False): bool})
+        return self.async_show_form(step_id="launch", data_schema=schema,
                                     description_placeholders={"source": (source.device_name or source.entry.title) if source else ""})
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:

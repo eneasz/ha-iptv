@@ -11,7 +11,7 @@ from custom_components.ha_iptv.const import CONF_ADB_ENTITY, DOMAIN
 pytest_plugins = "pytest_homeassistant_custom_component"
 
 STATE = {
-    "v": 5, "app": "0.3", "ready": True, "server_time": 1_000_000, "power": "playing", "error": None,
+    "v": 5, "app": "0.6", "ready": True, "configured": True, "server_time": 1_000_000, "power": "playing", "error": None,
     "groups": 3, "channels": 10, "region": "PL", "group": "PL| NEWS", "group_id": "g1",
     "channel": {"id": "c1", "num": 16, "name": "PL: NEWS ONE", "icon": "http://x/i.png", "group_id": "g1", "group": "PL| NEWS",
                 "region": "PL", "fav": False, "claimed": "4K"},

@@ -35,7 +35,7 @@ tests/              pytest-homeassistant-custom-component suite
 
 ## Home Assistant
 **Install with HACS:** HACS > ⋮ > Custom repositories > add `https://github.com/eneasz/ha-iptv`, category *Integration* > install **HA IPTV** > restart Home Assistant. (Manual: copy `custom_components/ha_iptv` to `config/custom_components/`.)
-Install the app (`ha-iptv-app-*.apk` from the latest release) on each Fire TV stick and start it. Home Assistant lists the stick under *Discovered*; click Configure, check that the same 4-digit code is on both screens and press OK on the TV remote. If another TV is already set up, its provider login is copied for you (no typing). A paired stick refuses new pairings until you pick *Settings › Pair a new Home Assistant* on it.
+Install the app (`ha-iptv-app-*.apk` from the latest release) on each Fire TV stick and start it. Home Assistant lists the stick under *Discovered*; click Configure, check that the same 4-digit code is on both screens and press OK on the TV remote. If another TV is already set up, its provider login is copied for you (no typing). A paired stick refuses new pairings until you pick *Settings › Allow pairing again* on it.
 
 **Set up:** Settings > Devices & services > Add integration > *HA IPTV* once **per stick** (host, port 8765, token). Give each a name such as "Living room" and, optionally, the androidtv media_player and the TV so HA can wake everything when the app is closed.
 
