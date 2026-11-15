@@ -583,9 +583,10 @@ class DetailPanel(ctx: Context, val m: Movie, vod: VodRepo, cb: MoviesView.Cb, p
 /** Bottom bar shown while a film plays: title, progress, time, key hints. Auto-hides (managed by the activity). */
 class VodBar(ctx: Context) : FrameLayout(ctx) {
     private val d = ctx.resources.displayMetrics.density
-    private val title = TextView(ctx); private val time = TextView(ctx); private val hint = TextView(ctx)
+    private val title = TextView(ctx); private val time = TextView(ctx); private val hint = TextView(ctx); private val techTv = TextView(ctx)
     private var frac = 0f; private var paused = false
     var note = ""
+    var tech = ""
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val track = View(ctx)
     init {
@@ -594,10 +595,11 @@ class VodBar(ctx: Context) : FrameLayout(ctx) {
         val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding((48 * d).toInt(), (110 * d).toInt(), (48 * d).toInt(), (40 * d).toInt()) }
         title.apply { setTextColor(Neon.TEXT); textSize = 22f; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); setSingleLine() }
         time.apply { setTextColor(Neon.TEXT); textSize = 15f; setPadding(0, (4 * d).toInt(), 0, 0) }
-        hint.apply { setTextColor(Neon.withAlpha(Neon.TEXT, 220)); textSize = 17f; setPadding(0, (6 * d).toInt(), 0, 0); text = "◀ ▶  10 s     ▲ ▼  1 min     OK  pause     ≡  audio & subtitles     BACK  stop" }
+        hint.apply { setTextColor(Neon.withAlpha(Neon.TEXT, 220)); textSize = 17f; setPadding(0, (6 * d).toInt(), 0, 0); text = "◀ ▶  10 s     ▲ ▼  1 min     OK  timeline / pause     ≡  audio & subtitles     BACK  stop" }
         col.addView(title)
         col.addView(track, LinearLayout.LayoutParams(-1, (14 * d).toInt()).apply { topMargin = (10 * d).toInt() })
-        col.addView(time); col.addView(hint)
+        techTv.apply { setTextColor(Neon.CYAN); textSize = 16f; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); setPadding(0, (2 * d).toInt(), 0, 0) }
+        col.addView(time); col.addView(techTv); col.addView(hint)
         addView(col, LayoutParams(-1, -2, Gravity.BOTTOM))
         isClickable = false; isFocusable = false
     }
@@ -605,6 +607,7 @@ class VodBar(ctx: Context) : FrameLayout(ctx) {
         title.text = name; this.paused = paused
         frac = if (dur > 0) (pos.toFloat() / dur).coerceIn(0f, 1f) else 0f
         time.text = (if (paused) "❚❚  " else "▶  ") + fmtTime(pos) + (if (dur > 0) "  /  " + fmtTime(dur) + "     " + fmtTime(dur - pos) + " left" else "") + (if (note.isNotEmpty()) "          $note" else "")
+        techTv.text = tech
         track.invalidate(); invalidate()
     }
     override fun dispatchDraw(c: Canvas) {

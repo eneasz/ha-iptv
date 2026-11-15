@@ -781,7 +781,7 @@ class MainActivity : Activity() {
         changed()
     }
     private fun startVod(m: Movie, startMs: Long) {
-        vodPlaying = m
+        vodPlaying = m; tech = null
         val p = ensurePlayer()
         p.setMediaItem(MediaItem.fromUri(vod.movieUrl(m)), startMs); p.prepare(); p.playWhenReady = true
         status.visibility = View.VISIBLE; status.text = "…"
@@ -794,7 +794,7 @@ class MainActivity : Activity() {
                 val pl = player ?: return@launch; val mv = vodPlaying ?: return@launch
                 if (pl.playbackState == Player.STATE_READY) {
                     if (++n % 5 == 0) vod.saveProgress(mv, pl.currentPosition, pl.duration)
-                    if (vodBar.visibility == View.VISIBLE) vodBar.update(mv.title, pl.currentPosition, pl.duration, !pl.isPlaying)
+                    if (vodBar.visibility == View.VISIBLE) vodBarUpdate(mv.title, pl.currentPosition, pl.duration, !pl.isPlaying)
                 }
             }
         }
@@ -828,7 +828,7 @@ class MainActivity : Activity() {
     }
     private fun showVodBar(keep: Boolean = false) {
         val m = vodPlaying ?: return; val p = player ?: return
-        vodBar.update(m.title, p.currentPosition, p.duration, !p.isPlaying)
+        vodBarUpdate(m.title, p.currentPosition, p.duration, !p.isPlaying)
         vodBar.visibility = View.VISIBLE; vodBar.bringToFront(); status.bringToFront()
         vodBarJob?.cancel()
         vodBarJob = scope.launch { kotlinx.coroutines.delay(if (keep) 5000 else 4000); if (player?.isPlaying == true) vodBar.visibility = View.GONE else vodBarJob = null }
@@ -884,7 +884,15 @@ class MainActivity : Activity() {
         trackPanel = panel; root.addView(panel, FrameLayout.LayoutParams(-1, -1)); vodBar.visibility = View.GONE; vodBarJob?.cancel()
         panel.post { (audioPick ?: first)?.requestFocus() }
     }
-    private val clearNote = Runnable { vodBar.note = ""; player?.let { p -> vodPlaying?.let { vodBar.update(it.title, p.currentPosition, p.duration, !p.isPlaying) } } }
+    /** "4K · H.265 · 3840×2076 · E-AC-3 5.1" for the film bar. */
+    private fun vodTechLine(): String {
+        val t = tech ?: return ""
+        val ch = when (t.ach) { 0 -> ""; 1 -> "mono"; 2 -> "2.0"; 6 -> "5.1"; 8 -> "7.1"; else -> "${t.ach} ch" }
+        return listOf(Quality.short(Quality.actual(t.w, t.h)), t.vcodec, "${t.w}×${t.h}" + (if (t.fps > 0) " ${t.fps}fps" else ""),
+            listOf(t.acodec, ch).filter { it.isNotEmpty() }.joinToString(" ")).filter { it.isNotEmpty() }.joinToString("   ·   ")
+    }
+    private fun vodBarUpdate(name: String, pos: Long, dur: Long, paused: Boolean) { vodBar.tech = vodTechLine(); vodBar.update(name, pos, dur, paused) }
+    private val clearNote = Runnable { vodBar.note = ""; player?.let { p -> vodPlaying?.let { vodBarUpdate(it.title, p.currentPosition, p.duration, !p.isPlaying) } } }
     private fun vodKey(e: KeyEvent): Boolean {
         if (e.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(e)
         val p = player ?: return super.dispatchKeyEvent(e)
@@ -903,7 +911,8 @@ class MainActivity : Activity() {
             KeyEvent.KEYCODE_DPAD_DOWN -> seek(-60_000L * accel)
             KeyEvent.KEYCODE_MEDIA_REWIND -> seek(-30_000L * accel)
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> seek(30_000L * accel)
-            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { if (e.repeatCount == 0) { if (p.isPlaying) p.pause() else p.play(); showVodBar() } }
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { if (e.repeatCount == 0) { if (vodBar.visibility != View.VISIBLE) showVodBar() else { if (p.isPlaying) p.pause() else p.play(); showVodBar() } } }
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { if (e.repeatCount == 0) { if (p.isPlaying) p.pause() else p.play(); showVodBar() } }
             KeyEvent.KEYCODE_MEDIA_PLAY -> { p.play(); showVodBar() }
             KeyEvent.KEYCODE_MEDIA_PAUSE -> { p.pause(); showVodBar() }
             KeyEvent.KEYCODE_MENU -> showTracks()
