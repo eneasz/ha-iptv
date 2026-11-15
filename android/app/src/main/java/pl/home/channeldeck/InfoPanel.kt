@@ -29,13 +29,13 @@ class InfoPanel(ctx: Context) : LinearLayout(ctx) {
     private val logo = ImageView(ctx).apply { scaleType = ImageView.ScaleType.FIT_CENTER; setPadding(dp(6), dp(6), dp(6), dp(6)); background = rr("#22FFFFFF") }
     private val title = tv(26f, true)
     private val nowLine = tv(20f, false)
-    private val bar = ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal).apply { max = 1000; progressDrawable.setTint(Color.parseColor("#2EA3F2")) }
-    private val nextLine = tv(17f, false).apply { setTextColor(Color.parseColor("#C0FFFFFF")) }
+    private val bar = ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal).apply { max = 1000; progressDrawable.setTint(Neon.CYAN) }
+    private val nextLine = tv(17f, false).apply { setTextColor(Neon.MUTED) }
     private val techLine = tv(17f, false)
 
     init {
         orientation = HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(18), dp(14), dp(18), dp(14)); background = rr("#EE0E141B")
+        setPadding(dp(18), dp(14), dp(18), dp(14)); background = GradientDrawable().apply { setColor(Color.parseColor("#F00B1330")); cornerRadius = dp(18).toFloat(); setStroke(dp(1), Neon.withAlpha(Neon.BLUE, 150)) }
         addView(logo, LayoutParams(dp(92), dp(92)).apply { rightMargin = dp(18) })
         val col = LinearLayout(ctx).apply { orientation = VERTICAL }
         col.addView(title); col.addView(nowLine)
@@ -46,13 +46,13 @@ class InfoPanel(ctx: Context) : LinearLayout(ctx) {
 
     private fun rr(c: String) = GradientDrawable().apply { setColor(Color.parseColor(c)); cornerRadius = dp(12).toFloat() }
     private fun tv(sp: Float, bold: Boolean) = TextView(context).apply {
-        textSize = sp; setTextColor(Color.WHITE); setSingleLine(); ellipsize = android.text.TextUtils.TruncateAt.END
+        textSize = sp; setTextColor(Neon.TEXT); setSingleLine(); ellipsize = android.text.TextUtils.TruncateAt.END
         if (bold) setTypeface(null, Typeface.BOLD)
     }
 
     fun bind(ch: Channel, group: String, state: EpgState, progs: List<Prog>, tech: Tech?, measuring: Boolean) {
         if (ch.icon.isNotEmpty()) logo.load(ch.icon) { size(184, 184); crossfade(false) } else { logo.dispose(); logo.setImageDrawable(null) }
-        title.text = "${ch.num}  ·  ${ch.name}"
+        title.text = "${ch.num}  ·  ${Neon.plain(ch.name)}"
 
         val now = System.currentTimeMillis() / 1000
         val cur = progs.firstOrNull { it.start <= now && now < it.stop }

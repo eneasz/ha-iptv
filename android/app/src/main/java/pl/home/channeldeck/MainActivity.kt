@@ -164,10 +164,10 @@ class MainActivity : Activity() {
 
     // ---------------------------------------------------------------- UI
     private fun rowBg(): StateListDrawable {
-        fun rr(c: Int) = GradientDrawable().apply { setColor(c); cornerRadius = dp(8).toFloat() }
+        fun rr(c: Int, stroke: Int, w: Float) = GradientDrawable().apply { setColor(c); cornerRadius = dp(14).toFloat(); setStroke((w * resources.displayMetrics.density).toInt(), stroke) }
         return StateListDrawable().apply {
-            addState(intArrayOf(android.R.attr.state_focused), rr(Color.parseColor("#2EA3F2")))
-            addState(intArrayOf(android.R.attr.state_selected), rr(Color.parseColor("#44FFFFFF")))
+            addState(intArrayOf(android.R.attr.state_focused), rr(Color.parseColor("#172863"), Neon.YELLOW, 2.5f))
+            addState(intArrayOf(android.R.attr.state_selected), rr(Neon.withAlpha(Neon.BLUE, 60), Neon.withAlpha(Neon.BLUE, 150), 1.2f))
             addState(intArrayOf(), ColorDrawable(Color.TRANSPARENT))
         }
     }
@@ -180,8 +180,8 @@ class MainActivity : Activity() {
         root.addView(playerView, FrameLayout.LayoutParams(-1, -1))
 
         banner = TextView(this).apply {
-            setTextColor(Color.WHITE); textSize = 22f; setPadding(dp(20), dp(12), dp(20), dp(12))
-            background = GradientDrawable().apply { setColor(Color.parseColor("#CC000000")); cornerRadius = dp(10).toFloat() }
+            setTextColor(Neon.TEXT); textSize = 22f; setPadding(dp(22), dp(12), dp(22), dp(12))
+            background = GradientDrawable().apply { setColor(Color.parseColor("#F00B1330")); cornerRadius = dp(26).toFloat(); setStroke(dp(2), Neon.withAlpha(Neon.YELLOW, 200)) }
             visibility = View.GONE
         }
         root.addView(banner, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(40), dp(30), 0, 0) })
@@ -198,7 +198,7 @@ class MainActivity : Activity() {
         // ----- overlay: groups | channels
         overlay = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#E6101820")); visibility = View.GONE
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.parseColor("#FA0B1330"), Color.parseColor("#FC04060F"))); visibility = View.GONE
         }
         val cols = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         regionAdapter = RowAdapter(
@@ -215,16 +215,20 @@ class MainActivity : Activity() {
         groupRv = rv(groupAdapter)
         chanRv = rv(chanAdapter)
         cols.addView(titled("REGIONS", regionRv), LinearLayout.LayoutParams(0, -1, 0.17f))
-        cols.addView(View(this).apply { setBackgroundColor(Color.parseColor("#33FFFFFF")) }, LinearLayout.LayoutParams(dp(1), -1))
+        cols.addView(View(this).apply { setBackgroundColor(Neon.withAlpha(Neon.BLUE, 70)) }, LinearLayout.LayoutParams(dp(1), -1))
         cols.addView(titled("GROUPS", groupRv), LinearLayout.LayoutParams(0, -1, 0.33f))
-        cols.addView(View(this).apply { setBackgroundColor(Color.parseColor("#33FFFFFF")) }, LinearLayout.LayoutParams(dp(1), -1))
+        cols.addView(View(this).apply { setBackgroundColor(Neon.withAlpha(Neon.BLUE, 70)) }, LinearLayout.LayoutParams(dp(1), -1))
         cols.addView(titled("CHANNELS", chanRv), LinearLayout.LayoutParams(0, -1, 0.50f))
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(24), dp(12), dp(24), 0) }
+        head.addView(OrbView(this).apply { energy = 0.2f }, LinearLayout.LayoutParams(dp(48), dp(48)))
+        head.addView(TextView(this).apply { text = "Live TV"; setTextColor(Neon.TEXT); textSize = 26f; typeface = Typeface.create("sans-serif-light", Typeface.NORMAL); setPadding(dp(14), 0, 0, 0) })
+        overlay.addView(head, LinearLayout.LayoutParams(-1, -2))
         overlay.addView(cols, LinearLayout.LayoutParams(-1, 0, 1f))
         detailPanel = InfoPanel(this)
         overlay.addView(detailPanel, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(12), dp(6), dp(12), dp(6)) })
         hint = TextView(this).apply {
-            setTextColor(Color.parseColor("#AAFFFFFF")); textSize = 15f
-            setPadding(dp(20), dp(10), dp(20), dp(10))
+            setTextColor(Neon.MUTED); textSize = 15f
+            setPadding(dp(24), dp(10), dp(24), dp(14))
         }
         overlay.addView(hint, LinearLayout.LayoutParams(-1, -2))
         root.addView(overlay, FrameLayout.LayoutParams((resources.displayMetrics.widthPixels * 0.95f).toInt(), -1, Gravity.START))
@@ -239,8 +243,8 @@ class MainActivity : Activity() {
     private fun titled(title: String, rv: RecyclerView): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         addView(TextView(context).apply {
-            text = title; setTextColor(Color.parseColor("#88FFFFFF")); textSize = 14f
-            typeface = Typeface.DEFAULT_BOLD; setPadding(dp(20), dp(16), dp(20), dp(6))
+            text = title; setTextColor(Neon.CYAN); textSize = 13f; letterSpacing = 0.2f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); setPadding(dp(20), dp(16), dp(20), dp(8))
         })
         addView(rv, LinearLayout.LayoutParams(-1, 0, 1f))
     }
@@ -1070,17 +1074,17 @@ class MainActivity : Activity() {
         override fun onCreateViewHolder(p: ViewGroup, t: Int): VH {
             val row = LinearLayout(p.context).apply {
                 orientation = LinearLayout.HORIZONTAL; isFocusable = true; isClickable = true
-                background = rowBg(); setPadding(dp(14), dp(10), dp(14), dp(10))
-                layoutParams = RecyclerView.LayoutParams(-1, -2).apply { setMargins(0, dp(2), 0, dp(2)) }
+                background = rowBg(); setPadding(dp(16), dp(10), dp(16), dp(10))
+                layoutParams = RecyclerView.LayoutParams(-1, -2).apply { setMargins(dp(2), dp(3), dp(2), dp(3)) }
             }
             val logo = if (icon != null) ImageView(p.context).apply {
                 scaleType = ImageView.ScaleType.FIT_CENTER; setPadding(dp(3), dp(3), dp(3), dp(3))
-                background = GradientDrawable().apply { setColor(Color.parseColor("#22FFFFFF")); cornerRadius = dp(6).toFloat() }
+                background = GradientDrawable().apply { setColor(Neon.withAlpha(Color.WHITE, 235)); cornerRadius = dp(8).toFloat() }
             } else null
             if (logo != null) row.addView(logo, LinearLayout.LayoutParams(dp(54), dp(40)).apply { rightMargin = dp(12); gravity = Gravity.CENTER_VERTICAL })
             val tagTv = TextView(p.context).apply { textSize = 14f; setTypeface(null, Typeface.BOLD); setPadding(dp(10), 0, 0, 0) }
-            val n = TextView(p.context).apply { setTextColor(Color.WHITE); textSize = 20f; setSingleLine(); ellipsize = android.text.TextUtils.TruncateAt.END }
-            val c = TextView(p.context).apply { setTextColor(Color.parseColor("#99FFFFFF")); textSize = 16f; setPadding(dp(12), 0, 0, 0) }
+            val n = TextView(p.context).apply { setTextColor(Neon.TEXT); textSize = 20f; setSingleLine(); ellipsize = android.text.TextUtils.TruncateAt.END }
+            val c = TextView(p.context).apply { setTextColor(Neon.MUTED); textSize = 16f; setPadding(dp(12), 0, 0, 0) }
             val starTv = TextView(p.context).apply { text = "★"; setTextColor(Color.parseColor("#FFD60A")); textSize = 24f; setPadding(0, 0, dp(10), 0); visibility = View.GONE }
             row.addView(starTv, LinearLayout.LayoutParams(-2, -2))
             row.addView(n, LinearLayout.LayoutParams(0, -2, 1f)); row.addView(tagTv, LinearLayout.LayoutParams(-2, -2)); row.addView(c, LinearLayout.LayoutParams(-2, -2))
@@ -1094,12 +1098,12 @@ class MainActivity : Activity() {
 
         override fun onBindViewHolder(h: VH, i: Int) {
             val it = items[i]
-            h.name.text = (if (i == movingIdx) "⇅  " else "") + label(it); h.count.text = sub(it)
+            h.name.text = (if (i == movingIdx) "⇅  " else "") + Neon.plain(label(it)); h.count.text = sub(it)
             h.itemView.isSelected = i == activeIdx
             h.star.visibility = if (fav?.invoke(it) == true) View.VISIBLE else View.GONE
             val tg = tag?.invoke(it); h.tagView.text = tg?.first ?: ""; if (tg != null) h.tagView.setTextColor(tg.second)
             val url = icon?.invoke(it)
-            if (h.logo != null) { if (!url.isNullOrEmpty()) h.logo.load(url) { size(108, 80); crossfade(false) } else { h.logo.dispose(); h.logo.setImageDrawable(null) } }
+            if (h.logo != null) { h.logo.alpha = if (url.isNullOrEmpty()) 0.25f else 1f; if (!url.isNullOrEmpty()) h.logo.load(url) { size(108, 80); crossfade(false) } else { h.logo.dispose(); h.logo.setImageDrawable(null) } }
             h.name.setTypeface(null, if (i == activeIdx || i == movingIdx) Typeface.BOLD else Typeface.NORMAL)
             h.itemView.setBackgroundColor(Color.TRANSPARENT)
             h.itemView.background = if (i == movingIdx) GradientDrawable().apply { setColor(Color.parseColor("#F2994A")); cornerRadius = dp(8).toFloat() } else rowBg()
