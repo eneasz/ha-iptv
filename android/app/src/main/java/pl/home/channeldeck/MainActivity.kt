@@ -143,6 +143,7 @@ class MainActivity : Activity() {
         prefs = Prefs(this)
         repo = Repo(prefs, filesDir)
         vod = VodRepo(this, prefs); ser = SeriesRepo(this, prefs); curRepo = vod; playRepo = vod
+        vod.warmProgress(); ser.warmProgress()
         prefs.sync.onChange = { changed() }
         prefs.sync.onRemote = { keys -> handleRemote(keys) }
         buildUi()

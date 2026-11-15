@@ -9,8 +9,8 @@ android {
         applicationId = "pl.home.channeldeck"
         minSdk = 22
         targetSdk = 34
-        versionCode = 10
-        versionName = "0.8.1"
+        versionCode = 11
+        versionName = "0.8.2"
     }
     buildTypes { release { isMinifyEnabled = false } }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }

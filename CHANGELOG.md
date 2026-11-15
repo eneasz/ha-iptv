@@ -1,4 +1,7 @@
 # Changelog
+## 0.4.4
+- App 0.8.2: film and episode progress saved before sync existed is now shared too, so every TV's Continue watching list matches (it used to show only what was watched after sync was added).
+
 ## 0.4.3
 - App 0.8.1: fixed a black screen after the first channel load on a newly paired TV. A command from Home Assistant that arrived while channels were loading (for example the TV's name) hid the splash without showing the Home screen. The name command now runs at once, and the Home screen always appears when a command starts no playback.
 

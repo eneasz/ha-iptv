@@ -228,8 +228,19 @@ open class VodRepo(ctx: Context, protected val prefs: Prefs, protected val serie
     protected val prog: MutableMap<String, String> by lazy {
         val m = HashMap<String, String>()
         try { val o = JSONObject(sp.getString("prog", "{}") ?: "{}"); o.keys().forEach { m[it] = o.getString(it) } } catch (e: Exception) {}
+        // Resume points saved before sync existed were never shared: hand them to the other sticks once (their own time, so newer edits elsewhere still win).
+        if (!sp.getBoolean("progSynced", false)) {
+            val now = System.currentTimeMillis()
+            m.forEach { (id, v) ->
+                val p = v.split(","); val k = skey + id
+                if (p.size == 3 && prefs.sync.time(k) == 0L) prefs.sync.put(k, "${p[0]},${p[1]}", (p[2].toLongOrNull()?.times(1000) ?: (now - 3_600_000)).coerceAtMost(now), quiet = true)
+            }
+            sp.edit().putBoolean("progSynced", true).apply()
+        }
         m
     }
+    /** Loads the resume points now (also hands pre-sync ones to the other sticks, once). */
+    fun warmProgress() { prog.size }
     fun progress(id: String): Pair<Long, Long>? = prog[id]?.split(",")?.let { if (it.size == 3) Pair(it[0].toLongOrNull() ?: 0L, it[1].toLongOrNull() ?: 0L) else null }
     open fun fraction(id: String): Float = progress(id)?.let { (p, d) -> if (d > 0) (p.toFloat() / d).coerceIn(0f, 1f) else 0f } ?: 0f
     /** Sync key of an item's resume point: "vod:<id>" for films, "ser:<id>" for episodes. */
