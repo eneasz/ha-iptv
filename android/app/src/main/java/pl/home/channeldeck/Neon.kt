@@ -76,6 +76,8 @@ object Neon {
 class OrbView(ctx: Context) : View(ctx) {
     var energy = 0.4f
         set(v) { field = v.coerceIn(0f, 1f) }
+    /** 1 = normal; >1 adds extra halo passes around the rings (used by the splash). */
+    var glow = 1f
     private var boost = 0f
     private var t = 0f
     private var phase = 0f
@@ -142,7 +144,9 @@ class OrbView(ctx: Context) : View(ctx) {
                 if (j == 0) path.moveTo(x, y) else path.lineTo(x, y)
             }
             path.close()
-            for ((wd, al) in listOf(ring.w * 3f to 0.12f, ring.w to 1f)) {                   // wide faint pass = glow, no blur filter
+            val passes = if (glow > 1f) listOf(ring.w * 9f to 0.05f * glow, ring.w * 5f to 0.10f * glow, ring.w * 2.6f to 0.22f * glow, ring.w to 1f)
+                         else listOf(ring.w * 3f to 0.12f, ring.w to 1f)
+            for ((wd, al) in passes) {                   // wide faint pass = glow, no blur filter
                 ringPaint.strokeWidth = wd * d; ringPaint.alpha = (255 * al * ring.a * fade).toInt().coerceIn(0, 255)
                 c.drawPath(path, ringPaint)
             }
@@ -153,7 +157,7 @@ class OrbView(ctx: Context) : View(ctx) {
 
 /** Full-screen loading splash: orb, wordmark, one pulsing status line. */
 class SplashView(ctx: Context) : FrameLayout(ctx) {
-    val orb = OrbView(ctx).apply { energy = 1f }
+    val orb = OrbView(ctx).apply { energy = 1f; glow = 2.2f }
     val title = TextView(ctx)
     val status = TextView(ctx)
     private val d = ctx.resources.displayMetrics.density

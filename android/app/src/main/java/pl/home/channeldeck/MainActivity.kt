@@ -59,6 +59,18 @@ class MainActivity : Activity() {
     private lateinit var hint: TextView
     private lateinit var banner: TextView
     private lateinit var status: TextView
+    private var dotStep = 0
+    private val dotsTick: Runnable = object : Runnable {
+        override fun run() {
+            if (status.visibility == View.VISIBLE && status.text.toString().let { it == "…" || it.startsWith("●") }) {
+                dotStep = (dotStep + 1) % 4
+                val sp = android.text.SpannableString("● ● ●")
+                for (i in 0 until 3) sp.setSpan(android.text.style.ForegroundColorSpan(if (i < dotStep) Color.WHITE else Color.argb(70, 255, 255, 255)), i * 2, i * 2 + 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                status.text = sp
+            }
+            status.postDelayed(this, 300)
+        }
+    }
     private lateinit var groupRv: RecyclerView
     private lateinit var regionRv: RecyclerView
     private lateinit var regionAdapter: RowAdapter<Region>
@@ -199,6 +211,11 @@ class MainActivity : Activity() {
             setPadding(dp(60), dp(20), dp(60), dp(20))
         }
         root.addView(status, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        // animated "…" while buffering: three dots light up one after another
+        status.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) { status.post(dotsTick) }
+            override fun onViewDetachedFromWindow(v: View) { status.removeCallbacks(dotsTick) }
+        })
 
         // ----- overlay: groups | channels
         overlay = LinearLayout(this).apply {
