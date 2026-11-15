@@ -148,6 +148,7 @@ class MainActivity : Activity() {
         buildUi()
         applyIntentConfig(intent)
         apiServer = ApiServer(8765, apiHost).also { it.start() }
+        advertise()
         startFlow()
         handleIntentCmd(intent)
     }
@@ -185,7 +186,7 @@ class MainActivity : Activity() {
 
     override fun onStop() { super.onStop(); player?.pause() }
     override fun onStart() { super.onStart(); player?.play() }
-    override fun onDestroy() { apiServer?.stop(); scope.cancel(); player?.release(); player = null; super.onDestroy() }
+    override fun onDestroy() { try { nsdListener?.let { nsd?.unregisterService(it) } } catch (e: Exception) { }; apiServer?.stop(); scope.cancel(); player?.release(); player = null; super.onDestroy() }
 
     private fun startFlow() {
         if (!prefs.configured) { showSetup(); return }
@@ -324,31 +325,87 @@ class MainActivity : Activity() {
     }
 
     // ---------------------------------------------------------------- setup (first run)
+    private val pairing = Pairing()
+    private var pairPanel: View? = null
+    private fun showPairRequest(r: Pairing.Req) {
+        pairPanel?.let { root.removeView(it) }
+        fun close(approve: Boolean) {
+            pairing.decide(r, approve, prefs.token)
+            if (approve) { prefs.paired = true; prefs.pairOpenUntil = 0L; flashBanner("Home Assistant connected") }
+            pairPanel?.let { root.removeView(it) }; pairPanel = null
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+            setBackgroundColor(Color.parseColor("#F0101820")); setPadding(dp(200), dp(100), dp(200), dp(60)); isClickable = true
+        }
+        fun t(x: String, sz: Float, c: Int) = TextView(this).apply { text = x; textSize = sz; setTextColor(c); gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(8)) }
+        box.addView(t("Home Assistant wants to connect", 26f, Color.WHITE))
+        box.addView(t(r.code, 64f, Neon.CYAN).apply { typeface = Typeface.MONOSPACE; letterSpacing = 0.2f })
+        box.addView(t("Approve only if Home Assistant shows the same code.", 18f, Color.LTGRAY))
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, dp(20), 0, 0) }
+        val ok = Button(this).apply { text = "Approve"; setOnClickListener { close(true) } }
+        val no = Button(this).apply { text = "Deny"; setOnClickListener { close(false) } }
+        row.addView(ok); row.addView(no); box.addView(row)
+        pairPanel = box; root.addView(box, FrameLayout.LayoutParams(-1, -1)); ok.requestFocus()
+        scope.launch { kotlinx.coroutines.delay(Pairing.TTL); if (pairPanel === box) { pairing.poll(r.id, r.ha); pairPanel?.let { root.removeView(it) }; pairPanel = null } }
+    }
+
+    private var setupForm: View? = null
     private fun showSetup() {
         status.visibility = View.GONE
         val form = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
-            setBackgroundColor(Color.parseColor("#101820")); setPadding(dp(200), dp(60), dp(200), dp(40))
+            setBackgroundColor(Color.parseColor("#101820")); setPadding(dp(160), dp(40), dp(160), dp(30))
         }
-        fun label(t: String) = TextView(this).apply { text = t; setTextColor(Color.WHITE); textSize = 18f }
+        fun label(t: String, sz: Float = 18f, c: Int = Color.WHITE) = TextView(this).apply { text = t; setTextColor(c); textSize = sz }
         fun field(h: String, pw: Boolean = false) = EditText(this).apply {
             hint = h; setTextColor(Color.WHITE); setHintTextColor(Color.GRAY); textSize = 20f
             inputType = InputType.TYPE_CLASS_TEXT or (if (pw) InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_TEXT_VARIATION_URI)
             setSingleLine()
         }
+        form.addView(label("HA IPTV – set up this TV", 26f))
+        form.addView(label("Waiting for Home Assistant…", 22f, Neon.CYAN).apply { setPadding(0, dp(14), 0, dp(6)) })
+        form.addView(label("In Home Assistant open  Settings › Devices & services  and click Configure on “HA IPTV – ${prefs.sync.deviceName}”. A code will appear on both screens: press OK here when they match.", 17f, Color.LTGRAY))
+        form.addView(label("This TV: ${localIp() ?: "no network"}   ·   port 8765   ·   name: ${prefs.sync.deviceName}", 15f, Color.GRAY).apply { setPadding(0, dp(8), 0, 0) })
+        form.addView(label("If you already use HA IPTV on another TV, Home Assistant copies the provider login for you.", 15f, Color.GRAY).apply { setPadding(0, dp(2), 0, dp(14)) })
+        form.addView(label("Or type the provider login here", 16f, Color.LTGRAY))
         val s = field("http://host:port"); val u = field("username"); val p = field("password", true)
-        form.addView(label("HA IPTV – provider login")); form.addView(s); form.addView(u); form.addView(p)
-        form.addView(TextView(this).apply {
-            text = "Tip: can also be sent from a PC:  adb shell am start -n pl.home.channeldeck/.MainActivity --es server URL --es user U --es pass P"
-            setTextColor(Color.GRAY); textSize = 14f; setPadding(0, dp(10), 0, dp(10))
-        })
+        form.addView(s); form.addView(u); form.addView(p)
         form.addView(Button(this).apply {
             text = "Save"; setOnClickListener {
                 prefs.server = s.text.toString().trim(); prefs.user = u.text.toString().trim(); prefs.pass = p.text.toString().trim()
-                root.removeView(form); loadData()
+                if (prefs.configured) finishSetup()
             }
         })
+        setupForm = form
         root.addView(form, FrameLayout.LayoutParams(-1, -1))
+    }
+
+    private fun finishSetup() { setupForm?.let { root.removeView(it) }; setupForm = null; loadData() }
+
+    private fun localIp(): String? = try {
+        java.net.NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp && !it.isLoopback }
+            .flatMap { it.inetAddresses.toList() }.firstOrNull { it is java.net.Inet4Address }?.hostAddress
+    } catch (e: Exception) { null }
+
+    /** Announce this stick on the LAN so Home Assistant offers it for set-up by itself. */
+    private var nsd: android.net.nsd.NsdManager? = null
+    private var nsdListener: android.net.nsd.NsdManager.RegistrationListener? = null
+    private fun advertise() {
+        try {
+            val info = android.net.nsd.NsdServiceInfo().apply {
+                serviceName = "HA IPTV " + prefs.sync.deviceId.take(4); serviceType = "_haiptv._tcp."; port = 8765
+                setAttribute("id", prefs.sync.deviceId); setAttribute("name", prefs.sync.deviceName); setAttribute("app", "0.6")
+            }
+            val l = object : android.net.nsd.NsdManager.RegistrationListener {
+                override fun onServiceRegistered(i: android.net.nsd.NsdServiceInfo) {}
+                override fun onRegistrationFailed(i: android.net.nsd.NsdServiceInfo, e: Int) {}
+                override fun onServiceUnregistered(i: android.net.nsd.NsdServiceInfo) {}
+                override fun onUnregistrationFailed(i: android.net.nsd.NsdServiceInfo, e: Int) {}
+            }
+            nsd = (getSystemService(NSD_SERVICE) as android.net.nsd.NsdManager).also { it.registerService(info, android.net.nsd.NsdManager.PROTOCOL_DNS_SD, l) }
+            nsdListener = l
+        } catch (e: Exception) { }
     }
 
     // ---------------------------------------------------------------- data
@@ -690,9 +747,11 @@ class MainActivity : Activity() {
         }
         val yieldRow = NeonRow(this, "Hand over playback", yieldText())
         yieldRow.setOnClickListener { sy.yieldToOthers = !sy.yieldToOthers; yieldRow.set(yieldText()) }
+        val pair = NeonRow(this, "Pair a new Home Assistant", "OK to allow pairing for 5 minutes")
+        pair.setOnClickListener { prefs.pairOpenUntil = System.currentTimeMillis() + 300_000; pair.set("Open for 5 minutes – click Configure in Home Assistant") }
         val about = NeonRow(this, "About", "HA IPTV is a player only. It provides no channels, playlists or content – you bring your own subscription.")
         about.valueTv.setSingleLine(false)
-        val panel = SettingsPanel(this, listOf(fmt, refresh, name, yieldRow, api, about)) { }
+        val panel = SettingsPanel(this, listOf(fmt, refresh, name, yieldRow, pair, api, about)) { }
         settingsPanel = panel; root.addView(panel, FrameLayout.LayoutParams(-1, -1)); banner.bringToFront()
     }
     private fun closeSettings() { settingsPanel?.let { root.removeView(it) }; settingsPanel = null; home.settings.requestFocus() }
@@ -1319,7 +1378,7 @@ class MainActivity : Activity() {
     private fun progJson(p: Prog?) = if (p == null) JSONObject.NULL else JSONObject().put("title", p.title).put("desc", p.desc).put("start", p.start).put("stop", p.stop)
 
     private fun stateJson(): JSONObject {
-        val o = JSONObject().put("v", stateVer).put("app", "0.3").put("ready", dataReady).put("server_time", System.currentTimeMillis() / 1000)
+        val o = JSONObject().put("v", stateVer).put("app", "0.6").put("ready", dataReady).put("configured", prefs.configured).put("name", prefs.sync.deviceName).put("server_time", System.currentTimeMillis() / 1000)
         val c = playing; val p = player; val vm = vodPlaying
         val power = when {
             !resumed -> "background"
@@ -1389,6 +1448,23 @@ class MainActivity : Activity() {
             return JSONObject().put("device", sy.deviceId).put("name", sy.deviceName).put("epoch", sy.epoch).put("seq", sy.currentSeq())
                 .put("entries", sy.delta(since))
         }
+        override fun provision(): JSONObject = JSONObject().put("configured", prefs.configured)
+            .put("server", prefs.server).put("user", prefs.user).put("pass", prefs.pass)
+        override fun setProvision(c: JSONObject): JSONObject = onUi {
+            if (prefs.configured) return@onUi JSONObject().put("ok", false).put("error", "already set up")
+            val sv = c.optString("server").trim(); val us = c.optString("user").trim(); val pw = c.optString("pass").trim()
+            if (sv.isEmpty() || us.isEmpty() || pw.isEmpty()) return@onUi JSONObject().put("ok", false).put("error", "server, user and pass are required")
+            prefs.server = sv; prefs.user = us; prefs.pass = pw
+            finishSetup(); JSONObject().put("ok", true)
+        }
+        override fun pairRequest(ha: String): JSONObject {
+            if (ha.length < 8) return JSONObject().put("ok", false).put("error", "bad request")
+            if (!prefs.pairingOpen()) return JSONObject().put("ok", false).put("error", "closed")
+            val r = pairing.start(ha) ?: return JSONObject().put("ok", false).put("error", "busy")
+            onUi { showPairRequest(r) }
+            return JSONObject().put("ok", true).put("id", r.id).put("snonce", r.sn).put("name", prefs.sync.deviceName)
+        }
+        override fun pairPoll(id: String, ha: String): JSONObject = pairing.poll(id, ha)
         override fun syncMerge(entries: JSONObject): JSONObject {
             val sy = prefs.sync
             val n = sy.merge(entries, skipKey = "np:${sy.deviceId}").size       // nobody else may rewrite what is playing here

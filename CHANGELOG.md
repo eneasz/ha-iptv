@@ -1,4 +1,9 @@
 # Changelog
+## 0.4.0
+- Add a new TV without typing: the stick announces itself (mDNS), Home Assistant offers it under Discovered, a 4-digit code is shown on both screens and you approve on the TV remote; the access token is handed over automatically.
+- Optionally copy the provider login from a TV that is already set up.
+- App 0.6: pairing prompt, "Pair a new Home Assistant" in Settings; paired sticks reject new pairing requests unless opened there.
+
 ## 0.3.0
 App 0.5. **All your TVs stay in step**, and you can carry on watching in another room.
 

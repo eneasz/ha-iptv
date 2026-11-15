@@ -3,11 +3,11 @@
     "step": {
       "user": {
         "title": "HA IPTV",
-        "description": "Token: set it once on the stick with `adb shell am start -n pl.home.channeldeck/.MainActivity --es token YOURTOKEN`.",
+        "description": "A new stick shows up by itself under Discovered. Otherwise enter its IP and leave the token empty: you approve on the TV.",
         "data": {
           "host": "Fire TV IP",
           "port": "Port",
-          "token": "Access token"
+          "token": "Access token (leave empty to approve on the TV)"
         }
       },
       "launch": {
@@ -17,7 +17,8 @@
           "adb_entity": "Fire TV (androidtv) entity",
           "tv_entity": "TV media player",
           "turn_off_tv": "Turn off also switches TV off",
-          "device_name": "Name of this TV (shown on your other TVs, e.g. Living room)"
+          "device_name": "Name of this TV (shown on your other TVs, e.g. Living room)",
+          "copy_login": "Copy the provider login from the TV already set up (no typing on this TV)"
         }
       },
       "reauth_confirm": {
@@ -29,11 +30,22 @@
     },
     "error": {
       "cannot_connect": "The app did not answer. Open HA IPTV on the stick (TV on) and check IP/port.",
-      "invalid_auth": "Token rejected."
+      "invalid_auth": "Token rejected.",
+      "copy_failed": "Could not copy the provider login. Check that the other TV is on, or type it on this TV."
     },
     "abort": {
       "already_configured": "Already configured",
-      "reauth_successful": "Token updated"
+      "reauth_successful": "Token updated",
+      "pair_closed": "This TV is not accepting new pairings. On the TV open Settings › Pair a new Home Assistant, then try again.",
+      "pair_busy": "Another pairing request is waiting on that TV. Try again in two minutes.",
+      "pair_denied": "Denied on the TV.",
+      "pair_expired": "Nobody approved on the TV in time. Start again.",
+      "cannot_connect": "The app did not answer. Open HA IPTV on the stick (TV on).",
+      "invalid_auth": "The approved token was rejected."
+    },
+    "flow_title": "HA IPTV – {name}",
+    "progress": {
+      "approve": "Press OK on the TV to approve, **only if it shows the code {code}**.\n\n{name} is waiting for your approval."
     }
   },
   "options": {

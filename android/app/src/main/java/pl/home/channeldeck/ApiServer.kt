@@ -28,6 +28,13 @@ interface ApiHost {
     fun syncDelta(since: Long): JSONObject
     /** Merge entries pushed by Home Assistant. */
     fun syncMerge(entries: JSONObject): JSONObject
+    /** The provider login, so Home Assistant can copy it to a new stick. Empty fields when not set up. */
+    fun provision(): JSONObject
+    /** Give a stick that is not set up yet its provider login (refused once it has one). */
+    fun setProvision(c: JSONObject): JSONObject
+    /** Start "click to approve" pairing (no token needed; the stick decides whether to listen). */
+    fun pairRequest(ha: String): JSONObject
+    fun pairPoll(id: String, ha: String): JSONObject
 }
 
 /**
@@ -68,6 +75,8 @@ class ApiServer(private val port: Int, private val host: ApiHost) {
             val path = target.substringBefore('?')
             val q = target.substringAfter('?', "").split('&').filter { it.isNotEmpty() }
                 .associate { it.substringBefore('=') to URLDecoder.decode(it.substringAfter('=', ""), "UTF-8") }
+            if (path == "/api/pair/request" && method == "POST") { reply(c, 200, host.pairRequest(JSONObject(body.ifBlank { "{}" }).optString("nonce"))); return }
+            if (path == "/api/pair/poll") { reply(c, 200, host.pairPoll(q["id"] ?: "", q["nonce"] ?: "")); return }
             val auth = hdr["authorization"]?.removePrefix("Bearer ")?.trim() ?: ""
             if (!MessageDigest.isEqual(auth.toByteArray(), host.token().toByteArray())) { reply(c, 401, JSONObject().put("error", "unauthorized")); return }
             reply(c, 200, route(method, path, q, body))
@@ -91,6 +100,8 @@ class ApiServer(private val port: Int, private val host: ApiHost) {
         path == "/api/quality" -> host.quality(q["group"] ?: "")
         path == "/api/sync" && method == "POST" -> host.syncMerge(JSONObject(body.ifBlank { "{}" }).optJSONObject("entries") ?: JSONObject())
         path == "/api/sync" -> host.syncDelta(q["since"]?.toLongOrNull() ?: 0L)
+        path == "/api/provision" && method == "POST" -> host.setProvision(JSONObject(body.ifBlank { "{}" }))
+        path == "/api/provision" -> host.provision()
         path == "/api/command" && method == "POST" -> host.command(JSONObject(body.ifBlank { "{}" }))
         else -> JSONObject().put("error", "not found: $path")
     }

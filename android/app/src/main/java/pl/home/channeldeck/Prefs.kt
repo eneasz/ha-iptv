@@ -20,6 +20,13 @@ class Prefs(private val ctx: Context) {
     val sync = SyncStore(ctx)
 
     init { seedSync() }
+    /** A Home Assistant was approved here already (or a token was set by hand before this version). Closed to new pairing requests until opened in Settings. */
+    var paired: Boolean
+        get() = sp.getBoolean("paired", false)
+        set(v) = sp.edit().putBoolean("paired", v).apply()
+    init { if (!sp.contains("paired") && sp.contains("token")) paired = true }
+    @Volatile var pairOpenUntil = 0L
+    fun pairingOpen() = !paired || System.currentTimeMillis() < pairOpenUntil
     /** First run with sync: what this stick already had becomes the first synced state (empty values are never stamped). */
     private fun seedSync() {
         if (sp.getBoolean("seeded", false)) return

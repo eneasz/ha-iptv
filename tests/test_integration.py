@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+from ipaddress import ip_address
+from unittest.mock import AsyncMock
 
 import pytest
 from homeassistant.components.media_player import MediaPlayerState
@@ -255,3 +257,71 @@ async def test_name_is_pushed_to_the_app(hass: HomeAssistant, api, entry):
     hass.config_entries.async_update_entry(entry, options={**entry.options, "device_name": "Bedroom"})
     await _setup(hass, entry)
     api.command.assert_any_call(cmd="config", name="Bedroom")
+
+
+def _zc(host="5.6.7.8"):
+    from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
+    return ZeroconfServiceInfo(ip_address=ip_address(host), ip_addresses=[ip_address(host)], hostname="stick.local.", name="HA IPTV 1234._haiptv._tcp.local.",
+                               port=8765, type="_haiptv._tcp.local.", properties={"name": "Bedroom", "id": "1234"})
+
+
+async def test_discovered_stick_copies_login(hass, api, entry):
+    await _setup(hass, entry)
+    new = {**copy.deepcopy(STATE), "configured": False, "name": "Fire TV 1234"}
+    async def _state(wait=None, timeout=25):
+        if wait is None:
+            return copy.deepcopy(new)
+        await _hold()
+    api.state.side_effect = _state
+    api.provision = AsyncMock(return_value={"configured": True, "server": "http://p:80", "user": "u", "pass": "pw"})
+    api.provision_set = AsyncMock(return_value={"ok": True})
+    r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "zeroconf"}, data=_zc())
+    r = await _approve(hass, api, r)
+    assert r["step_id"] == "launch" and "copy_login" in r["data_schema"].schema
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {"copy_login": True})
+    assert r["type"] == "create_entry" and r["title"] == "Bedroom"
+    api.provision_set.assert_awaited_once_with("http://p:80", "u", "pw")
+    assert "copy_login" not in r["options"]
+
+
+async def test_discovered_stick_without_copy_or_source(hass, api):
+    new = {**copy.deepcopy(STATE), "configured": False}
+    async def _state(wait=None, timeout=25):
+        if wait is None:
+            return copy.deepcopy(new)
+        await _hold()
+    api.state.side_effect = _state
+    api.provision_set = AsyncMock()
+    r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "zeroconf"}, data=_zc("5.6.7.9"))
+    r = await _approve(hass, api, r)
+    assert "copy_login" not in r["data_schema"].schema          # nothing to copy from
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {})
+    assert r["type"] == "create_entry" and r["title"] == "Bedroom"
+    api.provision_set.assert_not_awaited()
+
+
+async def _approve(hass, api, r):
+    """Drive the 'click approve on the TV' step: the stick answers the request, then reports approval."""
+    assert r["type"] in ("progress", "progress_done")
+    await hass.async_block_till_done()
+    api.pair_poll.assert_called()
+    return await hass.config_entries.flow.async_configure(r["flow_id"])
+
+
+async def test_pair_denied(hass, api):
+    api.pair_poll = AsyncMock(return_value={"status": "denied"})
+    r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "zeroconf"}, data=_zc("5.6.7.10"))
+    await hass.async_block_till_done()
+    r = await hass.config_entries.flow.async_configure(r["flow_id"])
+    assert r["type"] == "abort" and r["reason"] == "pair_denied"
+
+
+async def test_pair_closed(hass, api):
+    api.pair_request = AsyncMock(return_value={"ok": False, "error": "closed"})
+    r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "zeroconf"}, data=_zc("5.6.7.11"))
+    assert r["type"] == "abort" and r["reason"] == "pair_closed"
+
+
+def test_pair_code_matches_app_rule():
+    from custom_components.ha_iptv.config_flow import pair_code
+    assert len(pair_code("aa" * 8, "bb" * 8)) == 4 and pair_code("a" * 16, "b" * 16) != pair_code("a" * 16, "c" * 16)

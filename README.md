@@ -2,6 +2,12 @@
 
 A Fire TV / Android TV **media player app** for Xtream Codes–compatible playlists you already have, plus a Home Assistant integration to control it.
 
+[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=eneasz&repository=ha-iptv&category=integration)
+[![Open your Home Assistant instance and start setting up HA IPTV.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=ha_iptv)
+
+1. **Download** adds the repository to HACS (one click, then restart Home Assistant).
+2. **Add integration** starts the setup. A stick running the app shows up under *Discovered* by itself.
+
 > ## ⚠️ Important – please read
 > **This project does not provide, sell, host, recommend, index or link to any IPTV service, playlist, channel list, credentials or content of any kind.** It is an empty player, like VLC or Kodi: it contains no channels and no provider. You must supply your own lawfully obtained subscription/playlist, and you are solely responsible for making sure that what you watch is licensed in your country.
 > The author has no affiliation with any IPTV provider or reseller and does not support or encourage piracy. Issues or pull requests that ask for, share or promote playlists, providers or credentials will be closed and deleted.
@@ -29,7 +35,7 @@ tests/              pytest-homeassistant-custom-component suite
 
 ## Home Assistant
 **Install with HACS:** HACS > ⋮ > Custom repositories > add `https://github.com/eneasz/ha-iptv`, category *Integration* > install **HA IPTV** > restart Home Assistant. (Manual: copy `custom_components/ha_iptv` to `config/custom_components/`.)
-Install the app (`ha-iptv-app-*.apk` from the latest release) on each Fire TV stick and set a token once: `adb shell am start -n pl.home.channeldeck/.MainActivity --es token SECRET`.
+Install the app (`ha-iptv-app-*.apk` from the latest release) on each Fire TV stick and start it. Home Assistant lists the stick under *Discovered*; click Configure, check that the same 4-digit code is on both screens and press OK on the TV remote. If another TV is already set up, its provider login is copied for you (no typing). A paired stick refuses new pairings until you pick *Settings › Pair a new Home Assistant* on it.
 
 **Set up:** Settings > Devices & services > Add integration > *HA IPTV* once **per stick** (host, port 8765, token). Give each a name such as "Living room" and, optionally, the androidtv media_player and the TV so HA can wake everything when the app is closed.
 

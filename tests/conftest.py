@@ -51,6 +51,8 @@ def api():
         a.command = AsyncMock(return_value={"ok": True})
         a.sync = AsyncMock(return_value={"device": "aaaa", "name": "Fire TV", "epoch": "e1", "seq": 0, "entries": {}})
         a.sync_push = AsyncMock(return_value={"ok": True, "applied": 0})
+        a.pair_request = AsyncMock(return_value={"ok": True, "id": "p1", "snonce": "5a5a5a5a5a5a5a5a", "name": "Bedroom"})
+        a.pair_poll = AsyncMock(return_value={"status": "approved", "token": "tok123"})
         yield a
 
 

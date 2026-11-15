@@ -76,6 +76,24 @@ class HaIptvApi:
     async def sync_push(self, entries: dict) -> dict:
         return await self._req("POST", "/api/sync", json={"entries": entries}, timeout=30)
 
+    async def pair_request(self, nonce: str) -> dict:
+        """Ask the stick to show an Approve/Deny prompt. Needs no token; answers {ok, id, snonce, name} or {ok: false, error}."""
+        return await self._req("POST", "/api/pair/request", json={"nonce": nonce})
+
+    async def pair_poll(self, pair_id: str, nonce: str) -> dict:
+        """{status: pending|approved|denied|expired|unknown, token?}"""
+        return await self._req("GET", "/api/pair/poll", params={"id": pair_id, "nonce": nonce})
+
+    async def provision(self) -> dict:
+        """The provider login stored on the stick (`configured` is False on a stick that is not set up)."""
+        return await self._req("GET", "/api/provision")
+
+    async def provision_set(self, server: str, user: str, password: str) -> dict:
+        res = await self._req("POST", "/api/provision", json={"server": server, "user": user, "pass": password}, timeout=20)
+        if isinstance(res, dict) and res.get("ok") is False:
+            raise HaIptvError(res.get("error", "provisioning failed"))
+        return res
+
     async def command(self, **cmd: Any) -> dict:
         res = await self._req("POST", "/api/command", json=cmd, timeout=20)
         if isinstance(res, dict) and res.get("ok") is False:
