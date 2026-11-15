@@ -205,8 +205,8 @@ class MainActivity : Activity() {
             label = { repo.shortName(it) }, sub = { it.count.toString() },
             onClick = { onGroupClick(it) }, onLong = { startMove(it) }, onFocus = { onGroupFocus(it) })
         chanAdapter = RowAdapter(
-            label = { (if (repo.isFav(it.id)) "★ " else "") + it.name }, sub = { it.num.toString() },
-            onClick = { onChannelClick(it) }, onLong = { toggleFavAt(it) }, onFocus = { onChannelFocus(it) },
+            label = { it.name }, sub = { it.num.toString() }, fav = { repo.isFav(it.id) },
+            onClick = { onChannelClick(it) }, onLong = { favHold }, onFocus = { onChannelFocus(it) },
             icon = { it.icon }, tag = { offTag(it) ?: Quality.rowTag(it.name, prefs.measured(it.id)) })
         groupRv = rv(groupAdapter)
         chanRv = rv(chanAdapter)
@@ -244,7 +244,7 @@ class MainActivity : Activity() {
 
     private fun setHint(moving: Boolean = false) {
         hint.text = if (moving) "MOVING GROUP   ▲▼ move   ◀ top   ▶ bottom   OK save   BACK cancel"
-        else "OK open · hold OK move/★ · MENU reload · FF/REW page · PLAY = check group live · BACK close"
+        else "OK open · hold OK = move group · ★ favourite channel · MENU reload · FF/REW page · PLAY = check group live · BACK close"
     }
 
     // ---------------------------------------------------------------- setup (first run)
@@ -529,7 +529,7 @@ class MainActivity : Activity() {
     }
 
     private fun flashBanner(text: String) {
-        banner.text = text; banner.visibility = View.VISIBLE
+        banner.text = text; banner.visibility = View.VISIBLE; banner.elevation = dp(24).toFloat(); banner.bringToFront()
         bannerJob?.cancel()
         bannerJob = scope.launch { kotlinx.coroutines.delay(3500); banner.visibility = View.GONE }
     }
@@ -543,7 +543,7 @@ class MainActivity : Activity() {
         playing?.let { if (it.groupId == browseGroup) bindDetail(it) }
         val gi = groupAdapter.items.indexOfFirst { it.id == browseGroup }.coerceAtLeast(0)
         val ci = chanAdapter.items.indexOfFirst { it.id == playing?.id }.coerceAtLeast(0)
-        if (focusGroups) focusPos(groupRv, gi) else focusPos(chanRv, ci)
+        if (focusGroups) { navRv = groupRv; navPos = gi; focusPos(groupRv, gi) } else { navRv = chanRv; navPos = ci; focusPos(chanRv, ci) }
         scrollTo(groupRv, gi); scrollTo(chanRv, ci); scrollTo(regionRv, regionAdapter.activeIdx.coerceAtLeast(0))
         resetHide()
     }
@@ -552,7 +552,7 @@ class MainActivity : Activity() {
     private fun resetHide() { hideJob?.cancel(); hideJob = scope.launch { kotlinx.coroutines.delay(15000); if (movingIdx < 0) hideOverlay() } }
     private fun scrollTo(rv: RecyclerView, pos: Int) { (rv.layoutManager as LinearLayoutManager).scrollToPositionWithOffset(pos, dp(120)) }
 
-    private fun focusPos(rv: RecyclerView, pos: Int, tries: Int = 8) {
+    private fun focusPos(rv: RecyclerView, pos: Int, tries: Int = 30) {
         scrollTo(rv, pos)
         rv.post {
             val h = rv.findViewHolderForAdapterPosition(pos)
@@ -665,14 +665,25 @@ class MainActivity : Activity() {
 
     // ---------------------------------------------------------------- keys
     private var navRv: RecyclerView? = null; private var navPos = -1
+    private var favHold = false
     private fun focusedIn(rv: RecyclerView): Int {
         val f = currentFocus ?: return -1
         return if (f.parent === rv) rv.getChildAdapterPosition(f) else -1
     }
 
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
-        if (e.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(e)
         val k = e.keyCode
+        val isOk = k == KeyEvent.KEYCODE_DPAD_CENTER || k == KeyEvent.KEYCODE_ENTER
+        if (e.action != KeyEvent.ACTION_DOWN) {
+            if (isOk && favHold) { favHold = false; return true }     // swallow the release that ends a favourite-hold
+            return super.dispatchKeyEvent(e)
+        }
+        if (isOk && overlay.visibility == View.VISIBLE && movingIdx < 0) {
+            // hold OK on a channel = toggle favourite (detected from key repeats: more reliable than the system long-press)
+            if (e.repeatCount == 0) favHold = false
+            val cp = focusedIn(chanRv)
+            if (cp >= 0 && e.repeatCount >= 1) { if (!favHold) { favHold = true; toggleFavAt(cp) }; return true }
+        }
         if (surveyJob?.isActive == true && k == KeyEvent.KEYCODE_BACK) { stopSurvey(); return true }
         if (overlay.visibility == View.VISIBLE) resetHide()
 
@@ -914,7 +925,7 @@ class MainActivity : Activity() {
         val c = chanAdapter.items.getOrNull(pos) ?: return false
         val now = !repo.isFav(c.id)
         repo.setFav(c.id, now); refreshLists(); changed()
-        flashBanner(if (now) "★ Added to favourites: ${c.name}" else "Removed from favourites: ${c.name}")
+        flashBanner(if (now) "★  Added to Favourites  ·  ${c.name}" else "☆  Removed from Favourites  ·  ${c.name}")
         focusPos(chanRv, pos.coerceAtMost(chanAdapter.items.size - 1).coerceAtLeast(0))
         return true
     }
@@ -971,7 +982,8 @@ class MainActivity : Activity() {
     inner class RowAdapter<T>(
         val label: (T) -> String, val sub: (T) -> String,
         val onClick: (Int) -> Unit, val onLong: ((Int) -> Boolean)?, val onFocus: ((Int) -> Unit)?,
-        val icon: ((T) -> String)? = null, val tag: ((T) -> Pair<String, Int>?)? = null
+        val icon: ((T) -> String)? = null, val tag: ((T) -> Pair<String, Int>?)? = null,
+        val fav: ((T) -> Boolean)? = null
     ) : RecyclerView.Adapter<RowAdapter<T>.VH>() {
         var items: MutableList<T> = ArrayList()
         var activeIdx = -1
@@ -987,10 +999,11 @@ class MainActivity : Activity() {
             if (common > 0) notifyItemRangeChanged(p, common)
             if (oldMid > newMid) notifyItemRangeRemoved(p + common, oldMid - newMid)
             else if (newMid > oldMid) notifyItemRangeInserted(p + common, newMid - oldMid)
+            if (nw.isNotEmpty()) notifyItemRangeChanged(0, nw.size)   // rows also show state that is not in the item (stars, OFF tags)
         }
         fun move(from: Int, to: Int) { val x = items.removeAt(from); items.add(to, x); notifyItemMoved(from, to) }
 
-        inner class VH(v: LinearLayout, val name: TextView, val count: TextView, val logo: ImageView?, val tagView: TextView) : RecyclerView.ViewHolder(v)
+        inner class VH(v: LinearLayout, val name: TextView, val count: TextView, val logo: ImageView?, val tagView: TextView, val star: TextView) : RecyclerView.ViewHolder(v)
 
         override fun onCreateViewHolder(p: ViewGroup, t: Int): VH {
             val row = LinearLayout(p.context).apply {
@@ -1006,9 +1019,11 @@ class MainActivity : Activity() {
             val tagTv = TextView(p.context).apply { textSize = 14f; setTypeface(null, Typeface.BOLD); setPadding(dp(10), 0, 0, 0) }
             val n = TextView(p.context).apply { setTextColor(Color.WHITE); textSize = 20f; setSingleLine(); ellipsize = android.text.TextUtils.TruncateAt.END }
             val c = TextView(p.context).apply { setTextColor(Color.parseColor("#99FFFFFF")); textSize = 16f; setPadding(dp(12), 0, 0, 0) }
+            val starTv = TextView(p.context).apply { text = "★"; setTextColor(Color.parseColor("#FFD60A")); textSize = 24f; setPadding(0, 0, dp(10), 0); visibility = View.GONE }
+            row.addView(starTv, LinearLayout.LayoutParams(-2, -2))
             row.addView(n, LinearLayout.LayoutParams(0, -2, 1f)); row.addView(tagTv, LinearLayout.LayoutParams(-2, -2)); row.addView(c, LinearLayout.LayoutParams(-2, -2))
             row.gravity = Gravity.CENTER_VERTICAL
-            val vh = VH(row, n, c, logo, tagTv)
+            val vh = VH(row, n, c, logo, tagTv, starTv)
             row.setOnClickListener { val i = vh.bindingAdapterPosition; if (i >= 0) onClick(i) }
             row.setOnLongClickListener { val i = vh.bindingAdapterPosition; i >= 0 && onLong?.invoke(i) == true }
             row.setOnFocusChangeListener { _, f -> if (f) { val i = vh.bindingAdapterPosition; if (i >= 0) onFocus?.invoke(i) } }
@@ -1019,6 +1034,7 @@ class MainActivity : Activity() {
             val it = items[i]
             h.name.text = (if (i == movingIdx) "⇅  " else "") + label(it); h.count.text = sub(it)
             h.itemView.isSelected = i == activeIdx
+            h.star.visibility = if (fav?.invoke(it) == true) View.VISIBLE else View.GONE
             val tg = tag?.invoke(it); h.tagView.text = tg?.first ?: ""; if (tg != null) h.tagView.setTextColor(tg.second)
             val url = icon?.invoke(it)
             if (h.logo != null) { if (!url.isNullOrEmpty()) h.logo.load(url) { size(108, 80); crossfade(false) } else { h.logo.dispose(); h.logo.setImageDrawable(null) } }
