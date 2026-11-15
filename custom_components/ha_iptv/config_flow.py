@@ -19,6 +19,7 @@ from .api import HaIptvApi, HaIptvAuthError, HaIptvError
 from .const import CONF_ADB_ENTITY, CONF_DEVICE_NAME, CONF_TOKEN, CONF_TURN_OFF_TV, CONF_TV_ENTITY, DEFAULT_PORT, DOMAIN
 
 CONF_SKIP_COPY = "skip_copy"
+CONF_PROV_SERVER, CONF_PROV_USER, CONF_PROV_PASS = "provider_server", "provider_username", "provider_password"
 PAIR_WAIT = 125  # seconds; the stick gives up after 120
 
 
@@ -50,6 +51,8 @@ class HaIptvConfigFlow(ConfigFlow, domain=DOMAIN):
         self._task: asyncio.Task | None = None
         self._pair: dict[str, str] = {}
         self._reason = "pair_failed"
+        self._title = ""
+        self._options: dict[str, Any] = {}
 
     async def _check(self, data: dict) -> str | None:
         api = HaIptvApi(async_get_clientsession(self.hass), data[CONF_HOST], data[CONF_PORT], data[CONF_TOKEN])
@@ -159,23 +162,45 @@ class HaIptvConfigFlow(ConfigFlow, domain=DOMAIN):
             user_input = dict(user_input)
             skip = user_input.pop(CONF_SKIP_COPY, False)
             title = (user_input.get(CONF_DEVICE_NAME) or "").strip() or self._name or f"HA IPTV ({self._data[CONF_HOST]})"
+            copied = False
             if source is not None and not skip:
                 try:
                     login = await source.api.provision()
                     if not login.get("server"):
                         raise HaIptvError("the other TV's app is too old to share its login")
                     await self._api(self._data[CONF_TOKEN]).provision_set(login["server"], login.get("user", ""), login.get("pass", ""))
+                    copied = True
                 except HaIptvError as err:
                     # the approved token must never be lost: the TV is added anyway and the user is told what to do
                     persistent_notification.async_create(
                         self.hass, f"{title} was added, but its provider login could not be copied from {source.device_name or source.entry.title}: {err}. "
                         "Turn the other TV on and re-add this one, or type the login on the TV.", title="HA IPTV", notification_id=f"ha_iptv_copy_{self.unique_id}")
+            self._title, self._options = title, user_input
+            if self._state.get("configured", True) is False and not copied:
+                return await self.async_step_login()           # nobody could copy it: ask for it here, with a real keyboard
             return self.async_create_entry(title=title, data=self._data, options=user_input)
         schema = _extras({CONF_DEVICE_NAME: self._name})
         if source is not None:
             schema = schema.extend({vol.Optional(CONF_SKIP_COPY, default=False): bool})
         return self.async_show_form(step_id="launch", data_schema=schema,
                                     description_placeholders={"source": (source.device_name or source.entry.title) if source else ""})
+
+    async def async_step_login(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """The TV has no provider login yet and none could be copied: type it here instead of on the TV remote."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            server, user, pw = (user_input.get(k, "").strip() for k in (CONF_PROV_SERVER, CONF_PROV_USER, CONF_PROV_PASS))
+            if not (server or user or pw):
+                return self.async_create_entry(title=self._title, data=self._data, options=self._options)   # skipped
+            try:
+                await self._api(self._data[CONF_TOKEN]).provision_set(server, user, pw)
+            except HaIptvError:
+                errors["base"] = "login_failed"
+            else:
+                return self.async_create_entry(title=self._title, data=self._data, options=self._options)
+        schema = vol.Schema({vol.Optional(CONF_PROV_SERVER): str, vol.Optional(CONF_PROV_USER): str,
+                             vol.Optional(CONF_PROV_PASS): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD))})
+        return self.async_show_form(step_id="login", data_schema=self.add_suggested_values_to_schema(schema, user_input), errors=errors)
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
         return await self.async_step_reauth_confirm()
@@ -199,8 +224,23 @@ class HaIptvConfigFlow(ConfigFlow, domain=DOMAIN):
 
 class HaIptvOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            if (name := (user_input.get(CONF_DEVICE_NAME) or "").strip()) and name != self.config_entry.title:
-                self.hass.config_entries.async_update_entry(self.config_entry, title=name)
-            return self.async_create_entry(data=user_input)
-        return self.async_show_form(step_id="init", data_schema=_extras(dict(self.config_entry.options)))
+            user_input = dict(user_input)
+            server, user, pw = (str(user_input.pop(k, "") or "").strip() for k in (CONF_PROV_SERVER, CONF_PROV_USER, CONF_PROV_PASS))
+            if server or user or pw:                                 # send a provider login to this TV (never stored in Home Assistant)
+                coord = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
+                try:
+                    if coord is None:
+                        raise HaIptvError("not loaded")
+                    await coord.api.provision_set(server, user, pw)
+                except HaIptvError:
+                    errors["base"] = "login_failed"
+            if not errors:
+                if (name := (user_input.get(CONF_DEVICE_NAME) or "").strip()) and name != self.config_entry.title:
+                    self.hass.config_entries.async_update_entry(self.config_entry, title=name)
+                return self.async_create_entry(data=user_input)
+        schema = _extras(dict(self.config_entry.options)).extend({
+            vol.Optional(CONF_PROV_SERVER): str, vol.Optional(CONF_PROV_USER): str,
+            vol.Optional(CONF_PROV_PASS): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD))})
+        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)

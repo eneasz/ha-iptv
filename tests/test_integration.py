@@ -296,6 +296,8 @@ async def test_discovered_stick_without_copy_or_source(hass, api):
     r = await _approve(hass, api, r)
     assert "skip_copy" not in r["data_schema"].schema          # nothing to copy from
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {})
+    assert r["step_id"] == "login"                                  # nothing to copy from: ask for it here
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {})     # skipped
     assert r["type"] == "create_entry" and r["title"] == "Bedroom"
     api.provision_set.assert_not_awaited()
 
@@ -342,5 +344,34 @@ async def test_copy_failure_keeps_the_tv(hass, api, entry):
     r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "zeroconf"}, data=_zc("5.6.7.12"))
     r = await _approve(hass, api, r)
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {})
+    assert r["step_id"] == "login"                                  # copy failed: the user can type it instead
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {})
     assert r["type"] == "create_entry" and r["data"]["token"] == "tok123"
     api.provision_set.assert_not_awaited()
+
+
+async def test_login_step_when_nothing_to_copy(hass, api):
+    new = {**copy.deepcopy(STATE), "configured": False}
+    async def _state(wait=None, timeout=25):
+        if wait is None:
+            return copy.deepcopy(new)
+        await _hold()
+    api.state.side_effect = _state
+    api.provision_set = AsyncMock(return_value={"ok": True})
+    r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "zeroconf"}, data=_zc("5.6.7.13"))
+    r = await _approve(hass, api, r)
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {})
+    assert r["type"] == "form" and r["step_id"] == "login"
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {"provider_server": "http://p:80", "provider_username": "u", "provider_password": "pw"})
+    assert r["type"] == "create_entry"
+    api.provision_set.assert_awaited_once_with("http://p:80", "u", "pw")
+
+
+async def test_options_send_login(hass, api, entry):
+    await _setup(hass, entry)
+    api.provision_set = AsyncMock(return_value={"ok": True})
+    r = await hass.config_entries.options.async_init(entry.entry_id)
+    r = await hass.config_entries.options.async_configure(r["flow_id"], {"provider_server": "http://p:80", "provider_username": "u", "provider_password": "pw"})
+    assert r["type"] == "create_entry"
+    api.provision_set.assert_awaited_once_with("http://p:80", "u", "pw")
+    assert "provider_password" not in r["data"]

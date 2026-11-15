@@ -1,4 +1,8 @@
 # Changelog
+## 0.4.2
+- If a TV has no provider login and none can be copied, the setup asks for it in Home Assistant (server, username, password; sent to the TV, never stored). The same fields are in the integration's Configure dialog to set or replace the login later.
+- App 0.8: the "Connected to Home Assistant" screen offers "Enter provider details on this TV instead" next to Cancel.
+
 ## 0.4.1
 - The approved token is never lost: if the provider login cannot be copied the TV is still added and a notification says why. The login is now copied automatically (untick-style opt-out "Do not copy"), and only offered when the other TV runs app 0.6 or newer.
 - App 0.7: first start asks how to set up (Home Assistant or typing), numbered steps with hints if nothing happens, an "approved, finish in Home Assistant" screen, a large pairing code with Deny as the default button, "Allow pairing again" in Settings.

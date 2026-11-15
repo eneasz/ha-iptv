@@ -473,11 +473,12 @@ class MainActivity : Activity() {
     /** After Approve, while Home Assistant still asks for the name: the TV must not look stuck. */
     private fun setupApproved() { screen {
         addView(txt("Connected to Home Assistant", 38f, Neon.CYAN, true))
-        addView(txt("Finish setting up on your phone or computer.\nThis screen updates by itself – you can put the remote down.", 24f, Color.WHITE).apply { setLineSpacing(0f, 1.25f); setPadding(0, dp(24), 0, dp(30)) })
-        val back = btn("Cancel setup", false) {
+        addView(txt("Finish setting up on your phone or computer.\nIf Home Assistant asks for your provider login, type it there.\nThis screen updates by itself – you can put the remote down.", 24f, Color.WHITE).apply { setLineSpacing(0f, 1.25f); setPadding(0, dp(24), 0, dp(30)) })
+        val manual = btn("Enter provider details on this TV instead", false) { setupManual() }
+        addView(manual, LinearLayout.LayoutParams(-2, -2).apply { bottomMargin = dp(18) })
+        addView(btn("Cancel setup", false) {
             prefs.token = java.security.SecureRandom().let { r -> ByteArray(12).also { r.nextBytes(it) }.joinToString("") { "%02x".format(it) } }; prefs.paired = false
-            setupChoice() }
-        addView(back, LinearLayout.LayoutParams(-2, -2)); back.requestFocus()
+            setupChoice() }, LinearLayout.LayoutParams(-2, -2))
     } }
 
     private fun finishSetup() { setupJob?.cancel(); setupForm?.let { root.removeView(it) }; setupForm = null; loadData() }

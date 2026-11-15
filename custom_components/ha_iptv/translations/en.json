@@ -26,11 +26,21 @@
         "data": {
           "token": "Access token"
         }
+      },
+      "login": {
+        "title": "Provider login for this TV",
+        "description": "This TV has no provider login yet and none could be copied. Type it here (easier than with the TV remote): the server address, username and password of your IPTV provider. It is sent straight to the TV and not stored in Home Assistant. Leave all empty to do it later.",
+        "data": {
+          "provider_server": "Server address (http://host:port)",
+          "provider_username": "Username",
+          "provider_password": "Password"
+        }
       }
     },
     "error": {
       "cannot_connect": "The app did not answer. Open HA IPTV on the stick (TV on) and check IP/port.",
-      "invalid_auth": "Token rejected."
+      "invalid_auth": "Token rejected.",
+      "login_failed": "The TV did not accept the login. It may already have one, or it is switched off."
     },
     "abort": {
       "already_configured": "Already configured",
@@ -55,9 +65,16 @@
           "adb_entity": "Fire TV (androidtv) entity",
           "tv_entity": "TV media player",
           "turn_off_tv": "Turn off also switches TV off",
-          "device_name": "Name of this TV (shown on your other TVs, e.g. Living room)"
-        }
+          "device_name": "Name of this TV (shown on your other TVs, e.g. Living room)",
+          "provider_server": "Send a provider login to this TV: server address",
+          "provider_username": "Provider username",
+          "provider_password": "Provider password"
+        },
+        "description": "Only fill the provider fields to set or replace the login on this TV; they are sent to the TV and not stored in Home Assistant."
       }
+    },
+    "error": {
+      "login_failed": "The TV did not accept the login. It may already have one, or it is switched off."
     }
   },
   "entity": {
