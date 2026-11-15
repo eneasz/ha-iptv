@@ -8,6 +8,7 @@ from homeassistant.helpers import config_validation as cv
 
 from .api import HaIptvError
 from .const import DOMAIN
+from .sync import async_continue
 
 ENTRY = {vol.Optional("entry_id"): cv.string}
 
@@ -31,6 +32,8 @@ SCHEMAS: dict[str, vol.Schema] = {
     "quality_report": vol.Schema({**ENTRY, vol.Required("group"): cv.string, vol.Optional("only_mismatches", default=False): cv.boolean}),
     "search_channels": vol.Schema({**ENTRY, vol.Required("query"): cv.string, vol.Optional("limit", default=20): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
                                    vol.Optional("group"): cv.string}),
+    "continue_on": vol.Schema({**ENTRY, vol.Optional("source_entry_id"): cv.string, vol.Optional("stop_source", default=True): cv.boolean}),
+    "sync_now": vol.Schema({}),
     "get_guide": vol.Schema({**ENTRY, vol.Optional("channel_id"): cv.string, vol.Optional("query"): cv.string,
                              vol.Optional("limit", default=8): vol.All(vol.Coerce(int), vol.Range(min=1, max=30))}),
 }
@@ -38,7 +41,7 @@ RESPONSES = {"list_watches", "quality_report", "search_channels", "get_guide"}
 
 
 def _coord(hass: HomeAssistant, call: ServiceCall):
-    entries = hass.data.get(DOMAIN, {})
+    entries = {k: v for k, v in hass.data.get(DOMAIN, {}).items() if k != "hub"}
     if eid := call.data.get("entry_id"):
         if eid not in entries:
             raise HomeAssistantError(f"unknown entry_id {eid}")
@@ -49,9 +52,20 @@ def _coord(hass: HomeAssistant, call: ServiceCall):
 
 
 async def _handle(hass: HomeAssistant, call: ServiceCall):
-    c = _coord(hass, call)
     d, name = call.data, call.service
+    if name == "sync_now":
+        await hass.data[DOMAIN]["hub"].async_sync_all()
+        return None
+    c = _coord(hass, call)
     try:
+        if name == "continue_on":
+            src = None
+            if sid := d.get("source_entry_id"):
+                if sid not in hass.data[DOMAIN] or sid == "hub":
+                    raise HomeAssistantError(f"unknown source_entry_id {sid}")
+                src = hass.data[DOMAIN][sid]
+            await async_continue(hass.data[DOMAIN]["hub"], c, src, d["stop_source"])
+            return None
         if name == "play_channel":
             if not (d.get("channel_id") or d.get("query")):
                 raise HomeAssistantError("give channel_id or query")

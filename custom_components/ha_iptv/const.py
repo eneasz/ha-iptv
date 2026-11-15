@@ -8,6 +8,7 @@ CONF_TOKEN = "token"
 CONF_ADB_ENTITY = "adb_entity"        # androidtv media_player used to launch the app over ADB
 CONF_TV_ENTITY = "tv_entity"          # TV (or AVR) media_player turned on before launching
 CONF_TURN_OFF_TV = "turn_off_tv"      # turn_off also switches the TV off
+CONF_DEVICE_NAME = "device_name"      # how the other sticks show this one (e.g. "Living room")
 
 APP_COMPONENT = "pl.home.channeldeck/.MainActivity"
 
@@ -19,4 +20,6 @@ EVENT_WATCH_TRIGGERED = f"{DOMAIN}_watch_triggered"
 EVENT_SCHEDULE_TRIGGERED = f"{DOMAIN}_schedule_triggered"
 
 # commands that can ride on a launch intent when the app is not running / in the background
+# commands that need the app on screen even when it is only in the background
+FRONT = {"vod", "continue"}
 LAUNCHABLE = {"play", "region", "group", "zap", "stop", "info"}

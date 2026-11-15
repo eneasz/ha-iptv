@@ -24,6 +24,10 @@ interface ApiHost {
     fun epg(ids: List<String>, limit: Int): JSONObject
     fun quality(group: String): JSONArray
     fun command(c: JSONObject): JSONObject
+    /** Entries changed after sequence `since` (0 = everything) plus who we are. */
+    fun syncDelta(since: Long): JSONObject
+    /** Merge entries pushed by Home Assistant. */
+    fun syncMerge(entries: JSONObject): JSONObject
 }
 
 /**
@@ -60,7 +64,7 @@ class ApiServer(private val port: Int, private val host: ApiHost) {
             val (method, target) = lines[0].split(" ").let { it[0] to it.getOrElse(1) { "/" } }
             val hdr = lines.drop(1).filter { ":" in it }.associate { it.substringBefore(":").trim().lowercase() to it.substringAfter(":").trim() }
             val len = hdr["content-length"]?.toIntOrNull() ?: 0
-            val body = if (len > 0) String(readN(inp, len.coerceAtMost(1 shl 20)), Charsets.UTF_8) else ""
+            val body = if (len > 0) String(readN(inp, len.coerceAtMost(4 shl 20)), Charsets.UTF_8) else ""
             val path = target.substringBefore('?')
             val q = target.substringAfter('?', "").split('&').filter { it.isNotEmpty() }
                 .associate { it.substringBefore('=') to URLDecoder.decode(it.substringAfter('=', ""), "UTF-8") }
@@ -85,6 +89,8 @@ class ApiServer(private val port: Int, private val host: ApiHost) {
         path == "/api/search" -> host.search(q["q"] ?: "", q["limit"]?.toIntOrNull() ?: 20, q["group"])
         path == "/api/epg" -> host.epg((q["ids"] ?: "").split(',').filter { it.isNotEmpty() }.take(60), q["limit"]?.toIntOrNull() ?: 12)
         path == "/api/quality" -> host.quality(q["group"] ?: "")
+        path == "/api/sync" && method == "POST" -> host.syncMerge(JSONObject(body.ifBlank { "{}" }).optJSONObject("entries") ?: JSONObject())
+        path == "/api/sync" -> host.syncDelta(q["since"]?.toLongOrNull() ?: 0L)
         path == "/api/command" && method == "POST" -> host.command(JSONObject(body.ifBlank { "{}" }))
         else -> JSONObject().put("error", "not found: $path")
     }

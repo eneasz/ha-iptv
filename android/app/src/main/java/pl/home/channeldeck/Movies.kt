@@ -48,7 +48,7 @@ fun fmtTime(ms: Long): String {
 }
 
 /** Xtream Codes VOD (movies) client: streamed JSON parse (the list is ~12 MB), on-disk cache, per-movie resume positions. */
-open class VodRepo(ctx: Context, private val prefs: Prefs, protected val series: Boolean = false) {
+open class VodRepo(ctx: Context, protected val prefs: Prefs, protected val series: Boolean = false) {
     private val dir = ctx.filesDir
     private val pfx = if (series) "series" else "vod"
     val label get() = if (series) "Series" else "Movies"
@@ -232,15 +232,25 @@ open class VodRepo(ctx: Context, private val prefs: Prefs, protected val series:
     }
     fun progress(id: String): Pair<Long, Long>? = prog[id]?.split(",")?.let { if (it.size == 3) Pair(it[0].toLongOrNull() ?: 0L, it[1].toLongOrNull() ?: 0L) else null }
     open fun fraction(id: String): Float = progress(id)?.let { (p, d) -> if (d > 0) (p.toFloat() / d).coerceIn(0f, 1f) else 0f } ?: 0f
+    /** Sync key of an item's resume point: "vod:<id>" for films, "ser:<id>" for episodes. */
+    protected val skey get() = if (series) "ser:" else "vod:"
     open fun saveProgress(m: Movie, pos: Long, dur: Long) {
         if (dur <= 0 || pos < 0) return
-        if (pos > dur * 0.95 || dur - pos < 90_000) prog.remove(m.id)           // finished
+        val now = System.currentTimeMillis()
+        if (pos > dur * 0.95 || dur - pos < 90_000) { prog.remove(m.id); prefs.sync.put(skey + m.id, null, now) }   // finished
         else if (pos < 30_000) { if (!prog.containsKey(m.id)) return }           // barely started: do not clutter the list
-        else prog[m.id] = "$pos,$dur,${System.currentTimeMillis() / 1000}"
+        else { prog[m.id] = "$pos,$dur,${now / 1000}"; prefs.sync.put(skey + m.id, "$pos,$dur", now, quiet = true) }
         if (prog.size > 80) prog.entries.sortedBy { it.value.substringAfterLast(',').toLongOrNull() ?: 0L }.take(prog.size - 80).forEach { prog.remove(it.key) }
         sp.edit().putString("prog", JSONObject(prog as Map<*, *>).toString()).apply()
     }
-    fun forget(id: String) { if (prog.remove(id) != null) sp.edit().putString("prog", JSONObject(prog as Map<*, *>).toString()).apply() }
+    fun forget(id: String) { if (prog.remove(id) != null) { sp.edit().putString("prog", JSONObject(prog as Map<*, *>).toString()).apply(); prefs.sync.put(skey + id, null) } }
+    /** Another stick changed this item's resume point. */
+    open fun applyRemote(key: String) {
+        if (!key.startsWith(skey)) return
+        val id = key.removePrefix(skey); val v = prefs.sync.get(key)
+        if (v == null) prog.remove(id) else prog[id] = "$v,${prefs.sync.time(key) / 1000}"
+        sp.edit().putString("prog", JSONObject(prog as Map<*, *>).toString()).apply()
+    }
     open fun continueList(): List<Movie> = prog.entries.sortedByDescending { it.value.substringAfterLast(',').toLongOrNull() ?: 0L }.mapNotNull { byId[it.key] }
 
     /** Plot, genre, cast… for the detail card. */

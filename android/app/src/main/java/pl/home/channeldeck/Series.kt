@@ -44,12 +44,21 @@ class SeriesRepo(ctx: Context, prefs: Prefs) : VodRepo(ctx, prefs, true) {
         super.saveProgress(m, pos, dur)
         if (!m.ep || dur <= 0) return
         val fin = pos > dur * 0.95 || dur - pos < 90_000
-        if (fin) watched.add(m.id)
+        if (fin) { watched.add(m.id); prefs.sync.put("serwatched:${m.id}", "1") }
         if (fin || pos >= 30_000) {
             last[m.cat] = "${m.id}|${System.currentTimeMillis() / 1000}"
+            prefs.sync.put("serlast:${m.cat}", m.id, quiet = !fin)
             if (last.size > 60) last.entries.sortedBy { it.value.substringAfter('|').toLongOrNull() ?: 0L }.take(last.size - 60).forEach { last.remove(it.key) }
             persist()
         }
+    }
+    override fun applyRemote(key: String) {
+        when {
+            key.startsWith("serwatched:") -> { val id = key.removePrefix("serwatched:"); if (prefs.sync.get(key) != null) watched.add(id) else watched.remove(id) }
+            key.startsWith("serlast:") -> { val sid = key.removePrefix("serlast:"); prefs.sync.get(key)?.let { last[sid] = "$it|${prefs.sync.time(key) / 1000}" } ?: last.remove(sid) }
+            else -> { super.applyRemote(key); return }
+        }
+        persist()
     }
     /** A show's progress bar = how far into the episode you last watched. */
     override fun fraction(id: String): Float = last[id]?.substringBefore('|')?.let { super.fraction(it) } ?: 0f

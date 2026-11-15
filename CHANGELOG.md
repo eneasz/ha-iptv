@@ -1,4 +1,22 @@
 # Changelog
+## 0.3.0
+App 0.5. **All your TVs stay in step**, and you can carry on watching in another room.
+
+**Sync between TVs (through Home Assistant)**
+- Favourites, the order of regions and groups, "Continue watching" positions for films and episodes, watched marks and the last live channel are shared between every stick that is set up in Home Assistant. Change something on one TV and the others follow within seconds; a TV that was off catches up when it comes back.
+- Edits on two TVs at the same time are merged (two different favourites both survive; for the same item the newest edit wins). Removing a favourite on one TV removes it everywhere.
+- Home shows **Continue** with what another TV played most recently (channel, film or episode, and where you stopped). OK starts it from the same place.
+- One stream per account: when another TV starts playing, this one stops and says so (Settings > Hand over playback turns it off).
+- Settings > "This stick's name" (or the new "Name of this TV" option in Home Assistant) is what the other TVs show, for example "Living room".
+- Provider address, username and password are never shared; add them on each stick.
+
+**Home Assistant**
+- New button **Continue here** on every TV, and service `ha_iptv.continue_on` (target TV, optional source TV): stops the source, then starts the same channel or film/episode on the target from the exact position, waking the TV and opening the app first when needed. `ha_iptv.sync_now` forces a sync.
+- New diagnostic sensor **Last synced**.
+- The media player now shows films and episodes (title, poster, position, duration), not only channels.
+- Each TV is its own device named after the TV, so two sticks no longer look the same.
+- HACS ready: brand icon, hassfest and HACS validation workflow.
+
 ## 0.2.1
 App 0.4.1. The Home Assistant integration is unchanged.
 

@@ -49,6 +49,8 @@ def api():
         a.epg = AsyncMock(return_value={"c1": [{"title": "Wiadomości", "desc": "", "start": 999_000, "stop": 1_001_000}]})
         a.quality = AsyncMock(return_value=[{**CHANNELS[0], "verdict": "mismatch"}, {**CHANNELS[1], "verdict": "ok"}])
         a.command = AsyncMock(return_value={"ok": True})
+        a.sync = AsyncMock(return_value={"device": "aaaa", "name": "Fire TV", "epoch": "e1", "seq": 0, "entries": {}})
+        a.sync_push = AsyncMock(return_value={"ok": True, "applied": 0})
         yield a
 
 

@@ -46,23 +46,37 @@ class HaIptvPlayer(HaIptvEntity, MediaPlayerEntity):
         return self.d.get("channel") or {}
 
     @property
+    def _vod(self) -> dict:
+        return self.d.get("vod") or {}
+
+    @property
+    def media_content_type(self) -> str:
+        return {"movie": MediaType.MOVIE, "episode": MediaType.TVSHOW}.get(self._vod.get("kind"), MediaType.CHANNEL)
+
+    @property
     def media_channel(self) -> str | None:
-        return self._ch.get("name")
+        return None if self._vod else self._ch.get("name")
 
     @property
     def media_content_id(self) -> str | None:
+        if self._vod:
+            return f"{self._vod.get('kind', 'movie')}:{self._vod['id']}"
         return f"channel:{self._ch['id']}" if self._ch else None
 
     @property
     def media_title(self) -> str | None:
+        if self._vod:
+            return self._vod.get("title")
         return (self.d.get("now") or {}).get("title") or self._ch.get("name")
 
     @property
     def media_series_title(self) -> str | None:
-        return self._ch.get("name")
+        return None if self._vod else self._ch.get("name")
 
     @property
     def media_image_url(self) -> str | None:
+        if self._vod:
+            return self._vod.get("poster") or None
         return self._ch.get("icon") or None
 
     @property
@@ -71,17 +85,21 @@ class HaIptvPlayer(HaIptvEntity, MediaPlayerEntity):
 
     @property
     def media_duration(self) -> int | None:
+        if self._vod:
+            return int(self._vod["dur"] / 1000) if self._vod.get("dur") else None
         n = self.d.get("now")
         return int(n["stop"] - n["start"]) if n else None
 
     @property
     def media_position(self) -> int | None:
+        if self._vod:
+            return int(self._vod.get("pos", 0) / 1000)
         n = self.d.get("now")
         return max(0, int(self.d.get("server_time", 0) - n["start"])) if n else None
 
     @property
     def media_position_updated_at(self) -> datetime | None:
-        return self._pos_stamp if self.d.get("now") else None
+        return self._pos_stamp if (self.d.get("now") or self._vod) else None
 
     @property
     def source(self) -> str | None:

@@ -348,7 +348,7 @@ class NeonRow(ctx: Context, val title: String, var value: String, val big: Boole
 }
 
 /** Home: orb + wordmark + clock, four tiles, resume hero. Everything sits on one 48dp margin / 3-gap grid. */
-class HomeView(ctx: Context, val onLive: () -> Unit, val onResume: () -> Unit, val onMovies: () -> Unit, val onSeries: () -> Unit, val onSettings: () -> Unit) : FrameLayout(ctx) {
+class HomeView(ctx: Context, val onLive: () -> Unit, val onResume: () -> Unit, val onMovies: () -> Unit, val onSeries: () -> Unit, val onSettings: () -> Unit, val onOther: () -> Unit = {}) : FrameLayout(ctx) {
     private val d = ctx.resources.displayMetrics.density
     val orb = OrbView(ctx).apply { energy = 0.2f }
     private val clock = TextView(ctx); private val date = TextView(ctx)
@@ -357,6 +357,7 @@ class HomeView(ctx: Context, val onLive: () -> Unit, val onResume: () -> Unit, v
     val series = TileView(ctx, "series", "Series", "Shows on demand")
     val settings = TileView(ctx, "settings", "Settings", "Format · API · About")
     val resume = NeonRow(ctx, "Resume", "", big = true)
+    val other = NeonRow(ctx, "Continue", "", big = true)        // what another stick was playing
     private val tick = object : Runnable { override fun run() { updateClock(); postDelayed(this, 20_000) } }
 
     init {
@@ -390,7 +391,10 @@ class HomeView(ctx: Context, val onLive: () -> Unit, val onResume: () -> Unit, v
         }
         val col = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
         col.addView(row, LinearLayout.LayoutParams(content + 2 * halo, -2).apply { leftMargin = -halo })
+        // one hero slot: what another TV played most recently takes it over from this TV's own Resume
+        col.addView(other, LinearLayout.LayoutParams(content, -2).apply { topMargin = (14 * d).toInt() })
         col.addView(resume, LinearLayout.LayoutParams(content, -2).apply { topMargin = (14 * d).toInt() })
+        other.visibility = View.GONE
         addView(col, LayoutParams(content, -2, Gravity.CENTER_HORIZONTAL or Gravity.CENTER_VERTICAL).apply { topMargin = (68 * d).toInt() })
 
         live.setOnClickListener { onLive() }
@@ -398,6 +402,7 @@ class HomeView(ctx: Context, val onLive: () -> Unit, val onResume: () -> Unit, v
         series.setOnClickListener { onSeries() }
         settings.setOnClickListener { onSettings() }
         resume.setOnClickListener { onResume() }
+        other.setOnClickListener { onOther() }
         updateClock()
     }
 
@@ -410,14 +415,26 @@ class HomeView(ctx: Context, val onLive: () -> Unit, val onResume: () -> Unit, v
     override fun onAttachedToWindow() { super.onAttachedToWindow(); post(tick) }
     override fun onDetachedFromWindow() { removeCallbacks(tick); super.onDetachedFromWindow() }
 
+    private var hasResume = false; private var hasOther = false
+    private fun heroVisibility() {
+        other.visibility = if (hasOther) View.VISIBLE else View.GONE
+        resume.visibility = if (hasResume && !hasOther) View.VISIBLE else View.GONE
+    }
     fun setResume(title: String?, sub: String?, icon: String? = null) {
-        resume.visibility = if (title == null) View.GONE else View.VISIBLE
+        hasResume = title != null; heroVisibility()
         if (title != null) {
             resume.titleTv.text = Neon.plain(title); resume.set(sub?.let { Neon.plain(it) } ?: "")
             if (!icon.isNullOrEmpty()) { resume.logo.visibility = View.VISIBLE; resume.logo.load(icon) } else resume.logo.visibility = View.GONE
         }
     }
-    fun focusDefault() { (if (resume.visibility == View.VISIBLE) resume else live).requestFocus() }
+    fun setOther(title: String?, sub: String?, icon: String? = null) {
+        hasOther = title != null; heroVisibility()
+        if (title != null) {
+            other.titleTv.text = Neon.plain(title); other.set(sub?.let { Neon.plain(it) } ?: "")
+            if (!icon.isNullOrEmpty()) { other.logo.visibility = View.VISIBLE; other.logo.load(icon) } else other.logo.visibility = View.GONE
+        }
+    }
+    fun focusDefault() { (if (other.visibility == View.VISIBLE) other else if (resume.visibility == View.VISIBLE) resume else live).requestFocus() }
 }
 
 /** Settings panel shown over Home. */

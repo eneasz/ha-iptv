@@ -11,7 +11,7 @@ from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import HaIptvApi, HaIptvAuthError, HaIptvError
-from .const import CONF_ADB_ENTITY, CONF_TOKEN, CONF_TURN_OFF_TV, CONF_TV_ENTITY, DEFAULT_PORT, DOMAIN
+from .const import CONF_ADB_ENTITY, CONF_DEVICE_NAME, CONF_TOKEN, CONF_TURN_OFF_TV, CONF_TV_ENTITY, DEFAULT_PORT, DOMAIN
 
 _MP = selector.EntitySelector(selector.EntitySelectorConfig(domain="media_player"))
 
@@ -21,6 +21,7 @@ def _extras(defaults: dict) -> vol.Schema:
         v = defaults.get(key)
         return vol.Optional(key, description={"suggested_value": v}) if v else vol.Optional(key)
     return vol.Schema({
+        opt(CONF_DEVICE_NAME): str,
         opt(CONF_ADB_ENTITY): _MP,
         opt(CONF_TV_ENTITY): _MP,
         vol.Optional(CONF_TURN_OFF_TV, default=defaults.get(CONF_TURN_OFF_TV, False)): bool,
@@ -62,7 +63,8 @@ class HaIptvConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_launch(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
-            return self.async_create_entry(title=f"HA IPTV ({self._data[CONF_HOST]})", data=self._data, options=user_input)
+            title = (user_input.get(CONF_DEVICE_NAME) or "").strip() or f"HA IPTV ({self._data[CONF_HOST]})"
+            return self.async_create_entry(title=title, data=self._data, options=user_input)
         return self.async_show_form(step_id="launch", data_schema=_extras({}))
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
@@ -88,5 +90,7 @@ class HaIptvConfigFlow(ConfigFlow, domain=DOMAIN):
 class HaIptvOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
+            if (name := (user_input.get(CONF_DEVICE_NAME) or "").strip()) and name != self.config_entry.title:
+                self.hass.config_entries.async_update_entry(self.config_entry, title=name)
             return self.async_create_entry(data=user_input)
         return self.async_show_form(step_id="init", data_schema=_extras(dict(self.config_entry.options)))

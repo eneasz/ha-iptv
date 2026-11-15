@@ -28,11 +28,21 @@ tests/              pytest-homeassistant-custom-component suite
 - ADB fallback / cold start: `--es cmd play --es query "News One"`, `--es cmd region --es region PL --ez play true`, `cmd zap --ei delta 1`, `cmd stop|pause|resume|info|home|survey`.
 
 ## Home Assistant
-Copy `custom_components/ha_iptv` to HA's `config/custom_components/`, restart, add the integration (host, port 8765, token; optionally the androidtv media_player and the TV so HA can wake everything when the app is closed).
+**Install with HACS:** HACS > ⋮ > Custom repositories > add `https://github.com/eneasz/ha-iptv`, category *Integration* > install **HA IPTV** > restart Home Assistant. (Manual: copy `custom_components/ha_iptv` to `config/custom_components/`.)
+Install the app (`ha-iptv-app-*.apk` from the latest release) on each Fire TV stick and set a token once: `adb shell am start -n pl.home.channeldeck/.MainActivity --es token SECRET`.
 
-Entities: `media_player` (browse region→group→channel, play_media, source=region, progress bar from EPG), sensors (channel, group, region, now, next, ends at, resolution, measured quality, survey progress), binary sensors (app reachable, quality mismatch, stream problem), selects (region, group), buttons (zap, info, favourite, reload), `calendar` TV guide for favourites.
+**Set up:** Settings > Devices & services > Add integration > *HA IPTV* once **per stick** (host, port 8765, token). Give each a name such as "Living room" and, optionally, the androidtv media_player and the TV so HA can wake everything when the app is closed.
 
-Services: `play_channel`, `zap`, `set_region`, `set_group`, `favourite`, `watch_programme` / `remove_watch` / `list_watches` (tune in when a show starts), `sleep_timer`, `survey_group` / `stop_survey`, `quality_report`, `search_channels`, `get_guide`.
+## Several TVs in step
+Add every stick to Home Assistant and they share favourites, region/group order, "Continue watching" positions (films and episodes), watched marks and the last live channel. Home Assistant is the hub: it collects each stick's changes, merges them (last write wins per item) and passes them on; a stick that was off catches up when it returns. Provider credentials are never shared.
+
+- **Continue on another TV:** the stick's Home screen offers *Continue* with whatever another TV played last, from the same position. In Home Assistant press **Continue here** on a TV, or call `ha_iptv.continue_on` (`entry_id` = target, optional `source_entry_id`); it stops the source first (one stream per account), then starts the same channel or film/episode on the target, waking the TV and the app if needed.
+- **Hand over playback:** when another TV starts playing, the one that was playing stops (Settings > Hand over playback).
+- The merge rules and the sync API (`/api/sync`) are described in `custom_components/ha_iptv/sync.py` and `android/.../Sync.kt`.
+
+Entities: `media_player` (browse region→group→channel, play_media, source=region, progress bar from EPG; shows films and episodes with position), sensors (channel, group, region, now, next, ends at, resolution, measured quality, survey progress), binary sensors (app reachable, quality mismatch, stream problem), selects (region, group), buttons (zap, info, favourite, reload, **continue here**), `calendar` TV guide for favourites.
+
+Services: `play_channel`, `zap`, `set_region`, `set_group`, `favourite`, `continue_on`, `sync_now`, `watch_programme` / `remove_watch` / `list_watches` (tune in when a show starts), `sleep_timer`, `survey_group` / `stop_survey`, `quality_report`, `search_channels`, `get_guide`.
 
 Events: `ha_iptv_channel_changed`, `ha_iptv_programme_started`, `ha_iptv_quality_mismatch`, `ha_iptv_stream_error`, `ha_iptv_watch_triggered`.
 

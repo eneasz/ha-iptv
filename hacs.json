@@ -1,1 +1,1 @@
-{ "name": "HA IPTV", "render_readme": true }
+{ "name": "HA IPTV", "render_readme": true, "homeassistant": "2025.1.0" }

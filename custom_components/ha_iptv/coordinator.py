@@ -14,7 +14,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api import HaIptvApi, HaIptvAuthError, HaIptvConnectionError, HaIptvError
 from .const import (
-    APP_COMPONENT, CONF_ADB_ENTITY, CONF_TURN_OFF_TV, CONF_TV_ENTITY, DOMAIN, EVENT_CHANNEL_CHANGED,
+    APP_COMPONENT, CONF_ADB_ENTITY, CONF_DEVICE_NAME, CONF_TURN_OFF_TV, CONF_TV_ENTITY, DOMAIN, EVENT_CHANNEL_CHANGED, FRONT,
     EVENT_PROGRAMME_STARTED, EVENT_QUALITY_MISMATCH, EVENT_STREAM_ERROR, LAUNCHABLE,
 )
 
@@ -51,6 +51,32 @@ class HaIptvCoordinator(DataUpdateCoordinator[dict]):
         self.guide: dict[str, list[dict]] = {}
         self.guide_channels: dict[str, dict] = {}
         self.scheduler: Any = None
+        self.hub: Any = None                  # SyncHub, set by __init__
+        self._last_seq: Any = None
+        self._sync_task: asyncio.Task | None = None
+        self._sync_again = False
+
+    @property
+    def device_name(self) -> str | None:
+        return (self.entry.options.get(CONF_DEVICE_NAME) or "").strip() or None
+
+    # -------------------------------------------------------------- sync with the other sticks
+    def request_sync(self) -> None:
+        """Pull this stick's changes into the hub and relay them (coalesces bursts)."""
+        if not self.hub:
+            return
+        if self._sync_task and not self._sync_task.done():
+            self._sync_again = True
+            return
+        self._sync_task = self.entry.async_create_background_task(self.hass, self._sync_loop(), f"{DOMAIN}_sync")
+
+    async def _sync_loop(self) -> None:
+        while True:
+            self._sync_again = False
+            await self.hub.async_sync(self)
+            self.async_update_listeners()
+            if not self._sync_again:
+                return
 
     # -------------------------------------------------------------- options
     @property
@@ -104,6 +130,8 @@ class HaIptvCoordinator(DataUpdateCoordinator[dict]):
                 await asyncio.sleep(60)
                 continue
             except HaIptvError as err:
+                if self.hub:
+                    self.hub.mark_offline(self)
                 if self.connected or self.data is None:
                     self.connected = False
                     self.async_set_updated_data(self._offline(err))
@@ -114,9 +142,14 @@ class HaIptvCoordinator(DataUpdateCoordinator[dict]):
                 self.connected = True
                 self._chan_cache.clear()
                 self.hass.async_create_task(self.async_refresh_catalog())
+                self._last_seq = None
             self._version = data.get("v", -1)
             self._emit_events(self.data or {}, data)
             self.async_set_updated_data(data)
+            seq = (data.get("sync") or {}).get("seq")
+            if seq is not None and seq != self._last_seq:
+                self._last_seq = seq
+                self.request_sync()
 
     # -------------------------------------------------------------- events
     def _emit_events(self, old: dict, new: dict) -> None:
@@ -186,6 +219,14 @@ class HaIptvCoordinator(DataUpdateCoordinator[dict]):
     async def async_command(self, **cmd: Any) -> dict:
         """Send a command; if the app is closed or in the background, bring it up over ADB first."""
         power = (self.data or {}).get("power")
+        if cmd.get("cmd") in FRONT and self.adb_entity and power in (None, "off", "background"):
+            await self.async_launch_app(None)          # these carry too much for a launch intent: open the app, then send
+            if not await self.async_wait_reachable():
+                raise HomeAssistantError("launched the app but it did not become reachable")
+            try:
+                return await self.api.command(**cmd)
+            except HaIptvError as err:
+                raise HomeAssistantError(str(err)) from err
         launch = self.adb_entity and cmd.get("cmd") in LAUNCHABLE and power in (None, "off", "background")
         if launch:
             await self.async_launch_app(cmd)

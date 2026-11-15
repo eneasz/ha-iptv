@@ -16,22 +16,38 @@ class Prefs(private val ctx: Context) {
     var pass: String
         get() = sp.getString("pass", "") ?: ""
         set(v) = sp.edit().putString("pass", v).apply()
+    /** Shared between all sticks (through Home Assistant): favourites, list order and the last live channel. */
+    val sync = SyncStore(ctx)
+
+    init { seedSync() }
+    /** First run with sync: what this stick already had becomes the first synced state (empty values are never stamped). */
+    private fun seedSync() {
+        if (sp.getBoolean("seeded", false)) return
+        val now = System.currentTimeMillis() - 1000L * 3600      // an hour back, so a deliberate edit elsewhere wins
+        fun arr(k: String) = try { JSONArray(sp.getString(k, "[]") ?: "[]").let { a -> List(a.length()) { a.getString(it) } } } catch (e: Exception) { emptyList() }
+        arr("favs").forEachIndexed { i, id -> sync.put("fav:$id", "1", now + i, quiet = true) }
+        arr("order").takeIf { it.isNotEmpty() }?.let { sync.put("order:groups", JSONArray(it).toString(), now, quiet = true) }
+        arr("rorder").takeIf { it.isNotEmpty() }?.let { sync.put("order:regions", JSONArray(it).toString(), now, quiet = true) }
+        val c = sp.getString("lastChannel", "") ?: ""; val g = sp.getString("lastGroup", "") ?: ""
+        if (c.isNotEmpty()) sync.put("last:live", "$c|$g", now, quiet = true)
+        sp.edit().putBoolean("seeded", true).apply()
+    }
+    private fun list(key: String): List<String> = sync.get(key)?.let { s -> try { JSONArray(s).let { a -> List(a.length()) { a.getString(it) } } } catch (e: Exception) { null } } ?: emptyList()
+
     var lastGroup: String
-        get() = sp.getString("lastGroup", "") ?: ""
-        set(v) = sp.edit().putString("lastGroup", v).apply()
+        get() = sync.get("last:live")?.substringAfter('|', "") ?: ""
+        set(v) { sync.put("last:live", "$lastChannel|$v") }
     var lastChannel: String
-        get() = sp.getString("lastChannel", "") ?: ""
-        set(v) = sp.edit().putString("lastChannel", v).apply()
+        get() = sync.get("last:live")?.substringBefore('|') ?: ""
+        set(v) { sync.put("last:live", "$v|$lastGroup") }
     /** "m3u8" or "ts" – whichever last worked. */
     var format: String
         get() = sp.getString("format", "m3u8") ?: "m3u8"
         set(v) = sp.edit().putString("format", v).apply()
 
     var groupOrder: List<String>
-        get() = (sp.getString("order", "[]") ?: "[]").let { s ->
-            val a = JSONArray(s); List(a.length()) { a.getString(it) }
-        }
-        set(v) = sp.edit().putString("order", JSONArray(v).toString()).apply()
+        get() = list("order:groups")
+        set(v) { sync.put("order:groups", JSONArray(v).toString()) }
 
     /** What we actually measured per channel: id -> "w,h,fps". Builds up from what you watch. */
     private val q: MutableMap<String, String> by lazy {
@@ -72,13 +88,20 @@ class Prefs(private val ctx: Context) {
         set(v) = sp.edit().putString("token", v).apply()
 
     var regionOrder: List<String>
-        get() = (sp.getString("rorder", "[]") ?: "[]").let { s -> val a = JSONArray(s); List(a.length()) { a.getString(it) } }
-        set(v) = sp.edit().putString("rorder", JSONArray(v).toString()).apply()
+        get() = list("order:regions")
+        set(v) { sync.put("order:regions", JSONArray(v).toString()) }
 
-    /** Favourite channel ids, in the order they were added. */
+    /** Favourite channel ids, in the order they were added. Each channel is its own synced entry, so adds on two sticks both survive. */
+    private var favCache: List<String>? = null
+    fun favsChanged() { favCache = null }
     var favs: List<String>
-        get() = (sp.getString("favs", "[]") ?: "[]").let { s -> val a = JSONArray(s); List(a.length()) { a.getString(it) } }
-        set(v) = sp.edit().putString("favs", JSONArray(v).toString()).apply()
+        get() = favCache ?: sync.entries("fav:").sortedBy { it.second.t }.map { it.first.removePrefix("fav:") }.also { favCache = it }
+        set(v) {
+            val old = favs.toSet(); val new = v.toSet(); val now = System.currentTimeMillis()
+            (old - new).forEach { sync.put("fav:$it", null, now) }
+            v.filter { it !in old }.forEachIndexed { i, id -> sync.put("fav:$id", "1", now + i) }
+            favCache = null
+        }
 
     val configured get() = server.isNotEmpty() && user.isNotEmpty() && pass.isNotEmpty()
 }

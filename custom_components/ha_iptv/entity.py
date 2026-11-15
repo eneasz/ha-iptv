@@ -16,7 +16,7 @@ class HaIptvEntity(CoordinatorEntity[HaIptvCoordinator]):
         eid = coordinator.entry.entry_id
         self._attr_unique_id = f"{eid}_{key}"
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, eid)}, name="HA IPTV", manufacturer="HA IPTV",
+            identifiers={(DOMAIN, eid)}, name=coordinator.entry.title or "HA IPTV", manufacturer="HA IPTV",
             model="Fire TV app", sw_version=(coordinator.data or {}).get("app"))
 
     @property

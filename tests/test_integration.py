@@ -12,7 +12,7 @@ from custom_components.ha_iptv.api import HaIptvAuthError, HaIptvConnectionError
 from custom_components.ha_iptv.const import DOMAIN
 from custom_components.ha_iptv.coordinator import intent_command
 
-from .conftest import STATE
+from .conftest import STATE, _hang
 
 PLAYER = "media_player.ha_iptv"
 
@@ -219,3 +219,39 @@ async def test_black_picture_flags_problem(hass, api, entry):
     await asyncio.sleep(0.05); await hass.async_block_till_done()
     assert hass.states.get("binary_sensor.ha_iptv_stream_problem").state == "on"
     assert errs and errs[0].data["error"] == "black_picture"
+
+
+async def test_film_shows_in_media_player(hass: HomeAssistant, api, entry):
+    film = {**copy.deepcopy(STATE), "power": "playing", "channel": None, "now": None, "next": None,
+            "vod": {"kind": "movie", "id": "5", "title": "A Film", "ext": "mkv", "poster": "http://x/p.jpg", "series": "", "pos": 61000, "dur": 6000000}}
+    async def _state(wait=None, timeout=25):
+        if wait is None:
+            return copy.deepcopy(film)
+        await _hang()
+    api.state.side_effect = _state
+    await _setup(hass, entry)
+    st = hass.states.get(PLAYER)
+    assert st.state == MediaPlayerState.PLAYING
+    assert st.attributes["media_title"] == "A Film" and st.attributes["media_content_type"] == "movie"
+    assert st.attributes["media_duration"] == 6000 and st.attributes["media_position"] == 61
+    assert st.attributes["entity_picture_local"] or st.attributes.get("entity_picture")
+
+
+async def test_sync_services_buttons_and_sensor_exist(hass: HomeAssistant, api, entry):
+    await _setup(hass, entry)
+    assert hass.services.has_service(DOMAIN, "continue_on") and hass.services.has_service(DOMAIN, "sync_now")
+    assert hass.states.get("button.ha_iptv_continue_here") is not None
+    assert hass.states.get("sensor.ha_iptv_last_synced") is not None
+    await hass.services.async_call(DOMAIN, "sync_now", {}, blocking=True)
+
+
+async def test_continue_here_with_nothing_to_continue_reports_it(hass: HomeAssistant, api, entry):
+    await _setup(hass, entry)
+    with pytest.raises(HomeAssistantError, match="nothing to continue"):
+        await hass.services.async_call("button", "press", {"entity_id": "button.ha_iptv_continue_here"}, blocking=True)
+
+
+async def test_name_is_pushed_to_the_app(hass: HomeAssistant, api, entry):
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "device_name": "Bedroom"})
+    await _setup(hass, entry)
+    api.command.assert_any_call(cmd="config", name="Bedroom")

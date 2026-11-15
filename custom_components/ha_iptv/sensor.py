@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorEntityDescription
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -48,7 +49,7 @@ SENSORS: tuple[Desc, ...] = (
 
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback) -> None:
-    async_add_entities(HaIptvSensor(entry.runtime_data, d) for d in SENSORS)
+    async_add_entities([*(HaIptvSensor(entry.runtime_data, d) for d in SENSORS), HaIptvSyncSensor(entry.runtime_data)])
 
 
 class HaIptvSensor(HaIptvEntity, SensorEntity):
@@ -65,3 +66,25 @@ class HaIptvSensor(HaIptvEntity, SensorEntity):
     @property
     def extra_state_attributes(self):
         return self.entity_description.attrs(self.d) if self.entity_description.attrs else None
+
+
+class HaIptvSyncSensor(HaIptvEntity, SensorEntity):
+    """When favourites, list order and resume points were last exchanged with the other TVs."""
+    _attr_translation_key = "last_sync"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator, "last_sync")
+
+    @property
+    def native_value(self):
+        return self.coordinator.hub.last_sync if self.coordinator.hub else None
+
+    @property
+    def extra_state_attributes(self):
+        hub = self.coordinator.hub
+        if not hub:
+            return None
+        return {"entries": sum(1 for v in hub.entries.values() if v[0]), "tvs_connected": sum(1 for c in hub.coords.values() if c.connected),
+                "tvs": len(hub.coords)}

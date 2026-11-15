@@ -172,6 +172,11 @@ class Repo(private val prefs: Prefs, private val cacheDir: File) {
         newOrder.forEachIndexed { i, x -> g[slots[i]] = x }
         prefs.groupOrder = g.map { it.id }; baseGroups = g
     }
+    /** The saved order changed on another stick. */
+    fun reapplyOrder() {
+        val saved = prefs.groupOrder; val by = baseGroups.associateBy { it.id }
+        baseGroups = saved.mapNotNull { by[it] } + baseGroups.filter { it.id !in saved }
+    }
     fun saveRegionOrder(order: List<Region>) { prefs.regionOrder = order.filter { !pseudo(it.id) }.map { it.id } }
 
     // ------------------------------------------------------------ search

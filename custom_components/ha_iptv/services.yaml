@@ -57,3 +57,9 @@ get_guide:
     channel_id: {selector: {text: {}}}
     query: {selector: {text: {}}}
     limit: {default: 8, selector: {number: {min: 1, max: 30}}}
+continue_on:
+  fields:
+    entry_id: {selector: {config_entry: {integration: ha_iptv}}}
+    source_entry_id: {selector: {config_entry: {integration: ha_iptv}}}
+    stop_source: {default: true, selector: {boolean: {}}}
+sync_now: {}

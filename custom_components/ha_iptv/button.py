@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .entity import HaIptvEntity
+from .sync import async_continue
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -26,7 +27,7 @@ BUTTONS = (
 
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback) -> None:
-    async_add_entities(HaIptvButton(entry.runtime_data, d) for d in BUTTONS)
+    async_add_entities([*(HaIptvButton(entry.runtime_data, d) for d in BUTTONS), ContinueHereButton(entry.runtime_data)])
 
 
 class HaIptvButton(HaIptvEntity, ButtonEntity):
@@ -41,3 +42,15 @@ class HaIptvButton(HaIptvEntity, ButtonEntity):
         if self.entity_description.key == "reload":
             self.coordinator.invalidate_channels()
             await self.coordinator.async_refresh_catalog()
+
+
+class ContinueHereButton(HaIptvEntity, ButtonEntity):
+    """Carry on here with whatever another TV was playing, from the same place."""
+    _attr_translation_key = "continue_here"
+    _attr_icon = "mdi:play-circle-outline"
+
+    def __init__(self, c) -> None:
+        super().__init__(c, "continue_here")
+
+    async def async_press(self) -> None:
+        await async_continue(self.coordinator.hub, self.coordinator)

@@ -1,5 +1,9 @@
 # HA IPTV – session notes (15 Nov 2026)
 
+## Sync + HACS (15 Nov, later) – 0.3.0 / app 0.5, NOT pushed or released
+See README "Several TVs in step". App: `Sync.kt` (SyncStore: key->(value,t,seq), LWW, tombstones, epoch), Prefs favs/orders/last live now live in it, `vod:`/`ser:`/`serlast:`/`serwatched:` hooks in Movies.kt/Series.kt, `np:<device>` = what each stick plays (Home "Continue" card, hand-over rule uses `since`). HA: `sync.py` (SyncHub, Store `ha_iptv_sync`, pull by seq, relay, full push on (re)connect, `async_continue`). Verified on the living-room stick by acting as a 2nd stick via POST /api/sync (merge, Home card, continue, hand-over, stale entry ignored, film from position, np stopped). NOT verified: two real sticks, real HA install (needs release or curl+unzip + restart). The stick was renamed "Living room" by a test. hassfest passes locally (docker).
+
+
 State: v0.3 pushed to github.com/eneasz/ha-iptv (main, latest 6625db7). APK: dist/ha-iptv-0.3.apk, installed on the living-room stick (168.192.1.89:5555; reachable only when the Samsung TV is on).
 
 ## Done

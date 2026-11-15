@@ -11,12 +11,13 @@
         }
       },
       "launch": {
-        "title": "Wake-up (optional)",
+        "title": "Name and wake-up (optional)",
         "description": "To start the app or wake the TV from HA when it is closed, pick the Android TV (ADB) media player of the stick and the TV.",
         "data": {
           "adb_entity": "Fire TV (androidtv) entity",
           "tv_entity": "TV media player",
-          "turn_off_tv": "Turn off also switches TV off"
+          "turn_off_tv": "Turn off also switches TV off",
+          "device_name": "Name of this TV (shown on your other TVs, e.g. Living room)"
         }
       },
       "reauth_confirm": {
@@ -42,7 +43,8 @@
         "data": {
           "adb_entity": "Fire TV (androidtv) entity",
           "tv_entity": "TV media player",
-          "turn_off_tv": "Turn off also switches TV off"
+          "turn_off_tv": "Turn off also switches TV off",
+          "device_name": "Name of this TV (shown on your other TVs, e.g. Living room)"
         }
       }
     }
@@ -75,6 +77,9 @@
       },
       "survey": {
         "name": "Survey progress"
+      },
+      "last_sync": {
+        "name": "Last synced"
       }
     },
     "binary_sensor": {
@@ -111,6 +116,9 @@
       },
       "reload": {
         "name": "Reload channel list"
+      },
+      "continue_here": {
+        "name": "Continue here"
       }
     },
     "calendar": {
@@ -323,6 +331,29 @@
           "description": "Limit"
         }
       }
+    },
+    "continue_on": {
+      "name": "Continue on another TV",
+      "description": "Carry on here with what another TV was playing (channel or film/episode, from the same position). The other TV is stopped first because the account allows one stream.",
+      "fields": {
+        "entry_id": {
+          "name": "Target TV",
+          "description": "The TV that should start playing (config entry id). Default: the first one."
+        },
+        "source_entry_id": {
+          "name": "Source TV",
+          "description": "Take over from this TV (config entry id). Default: whichever played most recently."
+        },
+        "stop_source": {
+          "name": "Stop the source",
+          "description": "Stop playback on the source TV."
+        }
+      }
+    },
+    "sync_now": {
+      "name": "Sync now",
+      "description": "Exchange favourites, list order and resume points between all TVs right now.",
+      "fields": {}
     }
   }
 }

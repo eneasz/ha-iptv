@@ -143,6 +143,8 @@ class MainActivity : Activity() {
         prefs = Prefs(this)
         repo = Repo(prefs, filesDir)
         vod = VodRepo(this, prefs); ser = SeriesRepo(this, prefs); curRepo = vod; playRepo = vod
+        prefs.sync.onChange = { changed() }
+        prefs.sync.onRemote = { keys -> handleRemote(keys) }
         buildUi()
         applyIntentConfig(intent)
         apiServer = ApiServer(8765, apiHost).also { it.start() }
@@ -277,7 +279,7 @@ class MainActivity : Activity() {
         root.addView(overlay, FrameLayout.LayoutParams(-1, -1))
         setHint()
         home = HomeView(this, onLive = { openLive() }, onResume = { resumeFromHome() },
-            onMovies = { openMovies() }, onSeries = { openSeries() }, onSettings = { openSettings() }).apply { visibility = View.GONE }
+            onMovies = { openMovies() }, onSeries = { openSeries() }, onSettings = { openSettings() }, onOther = { continueOther() }).apply { visibility = View.GONE }
         root.addView(home, FrameLayout.LayoutParams(-1, -1))
         fun mkView(repo: VodRepo) = MoviesView(this, repo, object : MoviesView.Cb {
             override fun play(m: Movie, fromStart: Boolean) { playVod(m, fromStart) }
@@ -463,6 +465,7 @@ class MainActivity : Activity() {
         chanAdapter.activeIdx = repo.channels(browseGroup).indexOfFirst { it.id == c.id }
         chanAdapter.notifyDataSetChanged()
         if (banner) showInfo()
+        playSince = System.currentTimeMillis(); publishNp()
         changed()
         epgJob = scope.launch {
             val l = try { repo.epg(c) } catch (e: Exception) { emptyList() }
@@ -650,6 +653,8 @@ class MainActivity : Activity() {
         player?.pause()
         val c = playing ?: repo.channel(prefs.lastChannel)
         home.setResume(c?.name, c?.let { groupName(it) }, c?.icon)
+        refreshOtherCard()
+        publishNp()
         updateHomeCounts()
         home.live.sub = if (dataReady) "${repo.groups.count { !Repo.pseudo(it.id) }} groups" else ""
         home.visibility = View.VISIBLE; home.alpha = 0f; home.animate().alpha(1f).setDuration(320).start()
@@ -673,9 +678,21 @@ class MainActivity : Activity() {
         refresh.setOnClickListener { scope.launch { refresh.set("Refreshing…"); try { repo.refresh(); applyData(false); refresh.set("Updated just now") } catch (e: Exception) { refresh.set("Failed: ${e.message}") } } }
         val tok = prefs.token
         val api = NeonRow(this, "Home Assistant API", "Port 8765  ·  token •••• ${tok.takeLast(4)}  ·  the full token goes into the HA integration setup")
+        val sy = prefs.sync
+        fun yieldText() = if (sy.yieldToOthers) "On  ·  playing here stops when another stick starts (one stream per account)" else "Off  ·  every stick plays on its own"
+        val name = NeonRow(this, "This stick's name", "${sy.deviceName}  ·  OK to rename (shown on your other sticks)")
+        name.setOnClickListener {
+            closeSettings()
+            askText("Name of this stick", "e.g. Living room", sy.deviceName, "Shown on your other sticks, next to what is playing here", onCancel = { openSettings() }) { v ->
+                if (v.isNotBlank()) { sy.deviceName = v; publishNp(); changed() }
+                openSettings()
+            }
+        }
+        val yieldRow = NeonRow(this, "Hand over playback", yieldText())
+        yieldRow.setOnClickListener { sy.yieldToOthers = !sy.yieldToOthers; yieldRow.set(yieldText()) }
         val about = NeonRow(this, "About", "HA IPTV is a player only. It provides no channels, playlists or content – you bring your own subscription.")
         about.valueTv.setSingleLine(false)
-        val panel = SettingsPanel(this, listOf(fmt, refresh, api, about)) { }
+        val panel = SettingsPanel(this, listOf(fmt, refresh, name, yieldRow, api, about)) { }
         settingsPanel = panel; root.addView(panel, FrameLayout.LayoutParams(-1, -1)); banner.bringToFront()
     }
     private fun closeSettings() { settingsPanel?.let { root.removeView(it) }; settingsPanel = null; home.settings.requestFocus() }
@@ -797,9 +814,9 @@ class MainActivity : Activity() {
         if (::moviesView.isInitialized && moviesView.visibility == View.VISIBLE) moviesView
         else if (::seriesView.isInitialized && seriesView.visibility == View.VISIBLE) seriesView else null
 
-    private fun playVod(m: Movie, fromStart: Boolean) {
+    private fun playVod(m: Movie, fromStart: Boolean, startAt: Long? = null) {
         playRepo = if (m.ep) ser else vod
-        val resume = if (fromStart) 0L else playRepo.progress(m.id)?.first?.takeIf { it > 30_000 } ?: 0L
+        val resume = startAt ?: if (fromStart) 0L else playRepo.progress(m.id)?.first?.takeIf { it > 30_000 } ?: 0L
         // one provider connection: stop whatever live channel was open, and forget it as "now playing"
         sampleJob?.cancel(); measureJob?.cancel(); epgJob?.cancel(); retryJob?.cancel(); surveyJob?.cancel()
         playing = null; stopped = false; vodRetries = 0
@@ -810,11 +827,12 @@ class MainActivity : Activity() {
         changed()
     }
     private fun startVod(m: Movie, startMs: Long) {
-        vodPlaying = m; tech = null
+        vodPlaying = m; tech = null; playSince = System.currentTimeMillis()
         val p = ensurePlayer()
         p.setMediaItem(MediaItem.fromUri(playRepo.movieUrl(m)), startMs); p.prepare(); p.playWhenReady = true
         status.visibility = View.VISIBLE; status.text = "…"
         showVodBar(true)
+        publishNp(pos = startMs)
         vodJob?.cancel()
         vodJob = scope.launch {
             var n = 0
@@ -822,7 +840,7 @@ class MainActivity : Activity() {
                 kotlinx.coroutines.delay(1000)
                 val pl = player ?: return@launch; val mv = vodPlaying ?: return@launch
                 if (pl.playbackState == Player.STATE_READY) {
-                    if (++n % 5 == 0) playRepo.saveProgress(mv, pl.currentPosition, pl.duration)
+                    if (++n % 5 == 0) { playRepo.saveProgress(mv, pl.currentPosition, pl.duration); publishNp(quiet = true) }
                     if (vodBar.visibility == View.VISIBLE) vodBarUpdate(mv.title, pl.currentPosition, pl.duration, !pl.isPlaying)
                 }
             }
@@ -850,7 +868,9 @@ class MainActivity : Activity() {
     private fun stopVod(reopen: Boolean = true) {
         val m = vodPlaying ?: return
         closeTracks()
-        player?.let { if (reopen && it.playbackState == Player.STATE_READY) playRepo.saveProgress(m, it.currentPosition, it.duration); it.stop(); it.clearMediaItems() }
+        player?.let { if (reopen && it.playbackState == Player.STATE_READY) playRepo.saveProgress(m, it.currentPosition, it.duration) }
+        publishNp(stoppedVod = m)
+        player?.let { it.stop(); it.clearMediaItems() }
         vodJob?.cancel(); vodBarJob?.cancel(); retryJob?.cancel()
         vodPlaying = null; vodBar.visibility = View.GONE; status.visibility = View.GONE
         val view = if (m.ep) seriesView else moviesView
@@ -1159,6 +1179,118 @@ class MainActivity : Activity() {
         return super.dispatchKeyEvent(e)
     }
 
+    // ---------------------------------------------------------------- sync with the other sticks (through Home Assistant)
+    private var playSince = 0L        // when this stick last started or resumed playing
+
+    private fun activelyPlaying(): Boolean {
+        val p = player ?: return false
+        return resumed && p.playWhenReady && (vodPlaying != null || (playing != null && !stopped))
+    }
+
+    /** Tell the other sticks what is on here (kept as the "np:<device>" entry, so they can offer to continue it). */
+    private fun publishNp(quiet: Boolean = false, pos: Long? = null, stoppedVod: Movie? = null) {
+        val sy = prefs.sync; val p = player
+        val m = stoppedVod ?: vodPlaying; val c = playing
+        val state = when {
+            stoppedVod != null -> "stopped"
+            m == null && (c == null || stopped || p == null) -> "stopped"
+            p == null || !resumed || !p.playWhenReady -> "paused"
+            else -> "playing"
+        }
+        val o = JSONObject().put("name", sy.deviceName).put("state", state).put("since", playSince)
+        if (m != null) {
+            val pp = pos ?: p?.currentPosition ?: 0L; val dd = p?.duration?.takeIf { it > 0 } ?: 0L
+            o.put("kind", if (m.ep) "episode" else "movie").put("id", m.id).put("title", m.title).put("ext", m.ext).put("poster", m.poster)
+                .put("pos", pp).put("dur", dd)
+            if (m.ep) o.put("series", m.cat).put("sub", ser.movie(m.cat)?.title ?: "")
+        } else if (c != null) {
+            o.put("kind", "live").put("id", c.id).put("title", c.name).put("sub", groupName(c)).put("g", playCtx).put("icon", c.icon)
+        } else return
+        sy.put("np:${sy.deviceId}", o.toString(), quiet = quiet)
+    }
+
+    private fun otherNps(): List<Triple<String, JSONObject, Long>> {
+        val me = "np:${prefs.sync.deviceId}"; val now = System.currentTimeMillis()
+        return prefs.sync.entries("np:").filter { it.first != me && now - it.second.t < 12 * 3600_000L }.mapNotNull { (k, e) ->
+            try {
+                val o = JSONObject(e.value)
+                val done = o.optLong("dur") > 0 && o.optLong("pos") > o.optLong("dur") * 0.95      // finished, nothing to continue
+                if (done) null else Triple(k.removePrefix("np:"), o, e.t)
+            } catch (x: Exception) { null }
+        }
+    }
+
+    private fun npSub(o: JSONObject): String {
+        val where = "From " + o.optString("name", "another TV")
+        val what = when (o.optString("kind")) {
+            "live" -> o.optString("sub")
+            else -> (o.optString("sub").takeIf { it.isNotEmpty() }?.plus("  ·  ") ?: "") + fmtTime(o.optLong("pos")) + (o.optLong("dur").takeIf { it > 0 }?.let { " of ${fmtTime(it)}" } ?: "")
+        }
+        val live = o.optString("state") == "playing"
+        return "$where" + (if (live) "  ·  playing now" else "") + "  ·  $what"
+    }
+
+    /** "Continue" card on Home: the most recent thing from another stick. */
+    private fun refreshOtherCard() {
+        // only when the other stick's item is more recent than what happened here
+        val mine = prefs.sync.time("np:${prefs.sync.deviceId}")
+        val n = otherNps().maxByOrNull { it.third }?.takeIf { it.third > mine }
+        if (n == null) { home.setOther(null, null); return }
+        home.setOther(n.second.optString("title"), npSub(n.second), n.second.optString("icon").ifEmpty { n.second.optString("poster") })
+    }
+
+    /** Play what another stick was playing, from where it was. Returns the title, or null when there is nothing. */
+    private fun continueOther(from: String? = null): String? {
+        val n = otherNps().filter { from == null || it.first == from }.maxByOrNull { it.third } ?: return null
+        val o = n.second
+        when (o.optString("kind")) {
+            "live" -> {
+                val ch = repo.channel(o.optString("id")) ?: return null
+                home.visibility = View.GONE; hideOverlay()
+                play(ch, banner = true, ctx = o.optString("g").takeIf { repo.inGroup(it, ch.id) })
+            }
+            else -> {
+                val ep = o.optString("kind") == "episode"
+                val m = Movie(o.optString("id"), o.optString("title", "?"), "", if (ep) o.optString("series") else "", o.optString("poster"), 0f,
+                    o.optString("ext", "mkv").ifEmpty { "mkv" }, 0L, false, ep)
+                home.visibility = View.GONE; hideOverlay()
+                val saved = (if (ep) ser else vod).progress(m.id)?.first ?: 0L
+                playVod(m, false, maxOf(o.optLong("pos"), saved).takeIf { it > 30_000 } ?: 0L)
+            }
+        }
+        return o.optString("title")
+    }
+
+    /** Entries arrived from another stick. */
+    private fun handleRemote(keys: List<String>) {
+        var lists = false; var card = false
+        for (k in keys) when {
+            k.startsWith("fav:") -> { prefs.favsChanged(); lists = true }
+            k.startsWith("order:") -> { repo.reapplyOrder(); lists = true }
+            k == "last:live" -> card = true
+            k.startsWith("vod:") -> vod.applyRemote(k)
+            k.startsWith("ser") -> ser.applyRemote(k)
+            k.startsWith("np:") && k != "np:${prefs.sync.deviceId}" -> { card = true; yieldIfTakenOver(k) }
+        }
+        // the lists and the Movies/Series screens rebuild when they are next opened, so nothing steals focus now
+        if (lists && dataReady && overlay.visibility != View.VISIBLE) { /* picked up by showOverlay() */ }
+        if (card && ::home.isInitialized && home.visibility == View.VISIBLE) {
+            val c = playing ?: repo.channel(prefs.lastChannel)
+            home.setResume(c?.name, c?.let { groupName(it) }, c?.icon); refreshOtherCard()
+        }
+    }
+
+    /** Another stick started playing after we did: the account allows one stream, so give way. */
+    private fun yieldIfTakenOver(key: String) {
+        if (!prefs.sync.yieldToOthers || !activelyPlaying()) return
+        val o = try { JSONObject(prefs.sync.get(key) ?: return) } catch (e: Exception) { return }
+        if (o.optString("state") != "playing" || o.optLong("since") <= playSince) return
+        val who = o.optString("name", "another TV")
+        if (vodPlaying != null) stopVod(reopen = false) else { player?.stop(); stopped = true; publishNp() }
+        showHome(); flashBanner("Now playing on $who")
+        changed()
+    }
+
     // ---------------------------------------------------------------- HA API (local HTTP) + commands
     private fun changed() { synchronized(stateLock) { stateVer++; stateLock.notifyAll() } }
 
@@ -1188,9 +1320,11 @@ class MainActivity : Activity() {
 
     private fun stateJson(): JSONObject {
         val o = JSONObject().put("v", stateVer).put("app", "0.3").put("ready", dataReady).put("server_time", System.currentTimeMillis() / 1000)
-        val c = playing; val p = player
+        val c = playing; val p = player; val vm = vodPlaying
         val power = when {
-            !resumed -> "background"; c == null || stopped || p == null -> "idle"
+            !resumed -> "background"
+            vm != null && p != null -> if (!p.playWhenReady) "paused" else if (p.isPlaying) "playing" else "buffering"
+            c == null || stopped || p == null -> "idle"
             !p.playWhenReady -> "paused"; p.isPlaying -> "playing"; else -> "buffering"
         }
         o.put("power", power).put("error", lastError ?: JSONObject.NULL).put("picture", picture)
@@ -1211,6 +1345,10 @@ class MainActivity : Activity() {
             o.put("epg_state", stateOf(c, playEpg, playEpgLoading).name.lowercase())
             o.put("now", progJson(cur)).put("next", progJson(nxt))
         }
+        if (vm != null) o.put("vod", JSONObject().put("kind", if (vm.ep) "episode" else "movie").put("id", vm.id).put("title", vm.title).put("ext", vm.ext).put("poster", vm.poster)
+            .put("series", if (vm.ep) vm.cat else "").put("pos", p?.currentPosition ?: 0L).put("dur", p?.duration?.takeIf { it > 0 } ?: 0L))
+        val sy = prefs.sync
+        o.put("sync", JSONObject().put("device", sy.deviceId).put("name", sy.deviceName).put("epoch", sy.epoch).put("seq", sy.currentSeq()).put("yield", sy.yieldToOthers))
         survey?.let { o.put("survey", JSONObject().put("group", groupDisplay(it.first)).put("group_id", it.first).put("done", it.second).put("total", it.third)) }
         return o
     }
@@ -1246,6 +1384,16 @@ class MainActivity : Activity() {
             } }
         }
         override fun command(c: JSONObject) = onUi { runCommand(c) }
+        override fun syncDelta(since: Long): JSONObject {
+            val sy = prefs.sync
+            return JSONObject().put("device", sy.deviceId).put("name", sy.deviceName).put("epoch", sy.epoch).put("seq", sy.currentSeq())
+                .put("entries", sy.delta(since))
+        }
+        override fun syncMerge(entries: JSONObject): JSONObject {
+            val sy = prefs.sync
+            val n = sy.merge(entries, skipKey = "np:${sy.deviceId}").size       // nobody else may rewrite what is playing here
+            return JSONObject().put("ok", true).put("applied", n).put("seq", sy.currentSeq())
+        }
     }
 
     private fun runCommand(j: JSONObject): JSONObject {
@@ -1275,9 +1423,26 @@ class MainActivity : Activity() {
                 if (j.optBoolean("play", false)) repo.channels(g.id).firstOrNull()?.let { hideOverlay(); play(it, banner = true, ctx = g.id) }
                 changed(); ok.put("region", r.name).put("group", g.name)
             }
-            "stop" -> { player?.stop(); stopped = true; infoPanel.visibility = View.GONE; changed(); ok }
-            "pause" -> { player?.pause(); changed(); ok }
-            "resume" -> { if (stopped) playing?.let { play(it, banner = true) } else player?.play(); changed(); ok }
+            "stop" -> {
+                if (vodPlaying != null) stopVod(reopen = false)
+                else { player?.stop(); stopped = true; infoPanel.visibility = View.GONE; publishNp() }
+                changed(); ok
+            }
+            "pause" -> { player?.pause(); publishNp(); changed(); ok }
+            "resume" -> { if (stopped && vodPlaying == null) playing?.let { play(it, banner = true) } else { player?.play(); playSince = System.currentTimeMillis() }; publishNp(); changed(); ok }
+            "vod" -> {
+                val id = j.optString("id"); if (id.isEmpty()) return err("id missing")
+                val ep = j.optString("kind") == "episode"
+                val m = Movie(id, j.optString("title", "?"), "", if (ep) j.optString("series") else "", j.optString("poster"), 0f, j.optString("ext", "mkv").ifEmpty { "mkv" }, 0L, false, ep)
+                hideOverlay(); home.visibility = View.GONE
+                playVod(m, false, if (j.has("pos_ms")) j.getLong("pos_ms") else null); ok.put("title", m.title)
+            }
+            "continue" -> continueOther(j.optString("from").takeIf { it.isNotEmpty() })?.let { ok.put("title", it) } ?: err("nothing to continue")
+            "config" -> {
+                if (j.has("name")) prefs.sync.deviceName = j.getString("name")
+                if (j.has("yield")) prefs.sync.yieldToOthers = j.getBoolean("yield")
+                publishNp(quiet = true); changed(); ok
+            }
             "info" -> { showInfo(); ok }
             "home" -> { moveTaskToBack(true); ok }
             "refresh" -> { scope.launch { try { repo.refresh(); applyData(false); changed() } catch (e: Exception) { flashBanner("Reload failed: ${e.message}") } }; ok }

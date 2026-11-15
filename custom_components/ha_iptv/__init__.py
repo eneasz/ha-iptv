@@ -12,6 +12,7 @@ from .const import CONF_TOKEN, DOMAIN
 from .coordinator import HaIptvCoordinator
 from .scheduler import Scheduler
 from .services import async_register_services
+from .sync import SyncHub
 
 PLATFORMS = [Platform.MEDIA_PLAYER, Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SELECT, Platform.BUTTON, Platform.CALENDAR]
 
@@ -25,14 +26,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaIptvConfigEntry) -> bo
     if coord.data.get("error") == "auth":
         raise ConfigEntryAuthFailed
     entry.runtime_data = coord
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    if "hub" not in domain_data:
+        domain_data["hub"] = SyncHub(hass)
+        await domain_data["hub"].async_load()
+    coord.hub = domain_data["hub"]
+    coord.hub.register(coord)
     coord.scheduler = Scheduler(hass, coord)
     await coord.scheduler.async_load()
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coord
+    domain_data[entry.entry_id] = coord
     async_register_services(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_reload))
     coord.start_push()
     coord.scheduler.start()
+    coord.request_sync()
     hass.async_create_task(coord.async_refresh_catalog())
     return True
 
@@ -43,6 +51,7 @@ async def _reload(hass: HomeAssistant, entry: HaIptvConfigEntry) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: HaIptvConfigEntry) -> bool:
     entry.runtime_data.scheduler.stop()
+    entry.runtime_data.hub.unregister(entry.runtime_data)
     if ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id, None)
     return ok

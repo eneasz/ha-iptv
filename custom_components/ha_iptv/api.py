@@ -69,6 +69,13 @@ class HaIptvApi:
     async def quality(self, group: str) -> list[dict]:
         return await self._req("GET", "/api/quality", params={"group": group}, timeout=30)
 
+    async def sync(self, since: int = 0) -> dict:
+        """Entries that changed on the stick after sequence number `since`, plus its device id, name and epoch."""
+        return await self._req("GET", "/api/sync", params={"since": since}, timeout=20)
+
+    async def sync_push(self, entries: dict) -> dict:
+        return await self._req("POST", "/api/sync", json={"entries": entries}, timeout=30)
+
     async def command(self, **cmd: Any) -> dict:
         res = await self._req("POST", "/api/command", json=cmd, timeout=20)
         if isinstance(res, dict) and res.get("ok") is False:
