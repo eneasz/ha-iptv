@@ -852,11 +852,22 @@ class MainActivity : Activity() {
         }
         val yieldRow = NeonRow(this, "Hand over playback", yieldText())
         yieldRow.setOnClickListener { sy.yieldToOthers = !sy.yieldToOthers; yieldRow.set(yieldText()) }
+        fun haText(): String {
+            val last = apiServer?.lastContact ?: 0L; val ago = (System.currentTimeMillis() - last) / 1000
+            return when {
+                !prefs.paired -> "Not paired  ·  add this TV in Home Assistant (Settings > Devices > Add, it shows up as discovered)"
+                last == 0L -> "Paired  ·  waiting for Home Assistant to get in touch"
+                ago < 90 -> "Paired  ·  connected now"
+                ago < 3600 -> "Paired  ·  last contact ${ago / 60} min ago"
+                else -> "Paired  ·  no contact for ${ago / 3600} h  ·  is Home Assistant running?"
+            }
+        }
+        val haRow = NeonRow(this, "Home Assistant", haText())
         val pair = NeonRow(this, "Allow pairing again", "OK to let a Home Assistant pair with this TV for 5 minutes")
         pair.setOnClickListener { prefs.pairOpenUntil = System.currentTimeMillis() + 300_000; pair.set("Open for 5 minutes – now click Configure in Home Assistant") }
         val about = NeonRow(this, "About", "HA IPTV is a player only. It provides no channels, playlists or content – you bring your own subscription.")
         about.valueTv.setSingleLine(false)
-        val panel = SettingsPanel(this, listOf(fmt, refresh, name, yieldRow, pair, api, about)) { }
+        val panel = SettingsPanel(this, listOf(fmt, refresh, name, yieldRow, haRow, pair, api, about)) { }
         settingsPanel = panel; root.addView(panel, FrameLayout.LayoutParams(-1, -1)); banner.bringToFront()
     }
     private fun closeSettings() { settingsPanel?.let { root.removeView(it) }; settingsPanel = null; home.settings.requestFocus() }
@@ -1562,12 +1573,12 @@ class MainActivity : Activity() {
             prefs.server = sv; prefs.user = us; prefs.pass = pw
             finishSetup(); JSONObject().put("ok", true)
         }
-        override fun pairRequest(ha: String): JSONObject {
-            if (ha.length < 8) return JSONObject().put("ok", false).put("error", "bad request")
+        override fun pairRequest(ha: String, pub: String): JSONObject {
+            if (ha.length < 8 || !Pairing.validPub(pub)) return JSONObject().put("ok", false).put("error", "bad request")   // old integrations (no key) are refused: the token must be encrypted
             if (!prefs.pairingOpen()) return JSONObject().put("ok", false).put("error", "closed")
-            val r = pairing.start(ha) ?: return JSONObject().put("ok", false).put("error", "busy")
+            val r = pairing.start(ha, pub) ?: return JSONObject().put("ok", false).put("error", "busy")
             onUi { showPairRequest(r) }
-            return JSONObject().put("ok", true).put("id", r.id).put("snonce", r.sn).put("name", prefs.sync.deviceName)
+            return JSONObject().put("ok", true).put("id", r.id).put("snonce", r.sn).put("spub", r.spub).put("name", prefs.sync.deviceName)
         }
         override fun pairPoll(id: String, ha: String): JSONObject = pairing.poll(id, ha)
         override fun syncMerge(entries: JSONObject): JSONObject {

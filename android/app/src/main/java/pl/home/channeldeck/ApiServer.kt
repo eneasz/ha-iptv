@@ -33,7 +33,7 @@ interface ApiHost {
     /** Give a stick that is not set up yet its provider login (refused once it has one). */
     fun setProvision(c: JSONObject): JSONObject
     /** Start "click to approve" pairing (no token needed; the stick decides whether to listen). */
-    fun pairRequest(ha: String): JSONObject
+    fun pairRequest(ha: String, pub: String): JSONObject
     fun pairPoll(id: String, ha: String): JSONObject
 }
 
@@ -42,6 +42,8 @@ interface ApiHost {
  * Auth: `Authorization: Bearer <token>`. GET /api/state?wait=<v> long-polls until the state version changes.
  */
 class ApiServer(private val port: Int, private val host: ApiHost) {
+    /** Time of the last request that carried the right token (Home Assistant polls all the time), 0 = never. */
+    @Volatile var lastContact = 0L
     @Volatile private var running = false
     private var server: ServerSocket? = null
 
@@ -75,10 +77,11 @@ class ApiServer(private val port: Int, private val host: ApiHost) {
             val path = target.substringBefore('?')
             val q = target.substringAfter('?', "").split('&').filter { it.isNotEmpty() }
                 .associate { it.substringBefore('=') to URLDecoder.decode(it.substringAfter('=', ""), "UTF-8") }
-            if (path == "/api/pair/request" && method == "POST") { reply(c, 200, host.pairRequest(JSONObject(body.ifBlank { "{}" }).optString("nonce"))); return }
+            if (path == "/api/pair/request" && method == "POST") { reply(c, 200, JSONObject(body.ifBlank { "{}" }).let { host.pairRequest(it.optString("nonce"), it.optString("pub")) }); return }
             if (path == "/api/pair/poll") { reply(c, 200, host.pairPoll(q["id"] ?: "", q["nonce"] ?: "")); return }
             val auth = hdr["authorization"]?.removePrefix("Bearer ")?.trim() ?: ""
             if (!MessageDigest.isEqual(auth.toByteArray(), host.token().toByteArray())) { reply(c, 401, JSONObject().put("error", "unauthorized")); return }
+            lastContact = System.currentTimeMillis()
             reply(c, 200, route(method, path, q, body))
         } catch (e: Exception) {
             try { reply(c, 500, JSONObject().put("error", e.message ?: e.javaClass.simpleName)) } catch (_: Exception) {}

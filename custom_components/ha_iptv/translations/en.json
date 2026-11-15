@@ -50,7 +50,9 @@
       "pair_denied": "The TV declined the request. If that wasn't you, someone on your network started it.",
       "pair_expired": "No answer from the TV in 2 minutes. Start again.",
       "cannot_connect": "The app did not answer. Open HA IPTV on the stick (TV on).",
-      "invalid_auth": "The approved token was rejected."
+      "invalid_auth": "The approved token was rejected.",
+      "pair_outdated": "This TV's app is too old for secure pairing. Update the HA IPTV app on the TV (sideload the latest APK) and try again.",
+      "pair_failed_secure": "The TV's reply could not be verified, so nothing was saved. Try again; if it keeps happening, someone on your network may be interfering."
     },
     "flow_title": "HA IPTV – {name}",
     "progress": {

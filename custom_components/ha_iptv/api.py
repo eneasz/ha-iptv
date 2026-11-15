@@ -76,9 +76,9 @@ class HaIptvApi:
     async def sync_push(self, entries: dict) -> dict:
         return await self._req("POST", "/api/sync", json={"entries": entries}, timeout=30)
 
-    async def pair_request(self, nonce: str) -> dict:
+    async def pair_request(self, nonce: str, pub: str) -> dict:
         """Ask the stick to show an Approve/Deny prompt. Needs no token; answers {ok, id, snonce, name} or {ok: false, error}."""
-        return await self._req("POST", "/api/pair/request", json={"nonce": nonce})
+        return await self._req("POST", "/api/pair/request", json={"nonce": nonce, "pub": pub})
 
     async def pair_poll(self, pair_id: str, nonce: str) -> dict:
         """{status: pending|approved|denied|expired|unknown, token?}"""

@@ -1,4 +1,7 @@
 # Changelog
+## 0.5.0
+- **Encrypted pairing.** The TV's token no longer travels in the clear. Home Assistant and the TV each make a throw-away key (ECDH, P-256) and the token is sent AES-GCM encrypted. The 4-digit code now also covers both public keys, so someone sitting between the two (two different key exchanges) makes the screens show different digits. An old TV app without encryption is refused with a clear message: update the app on the TV (0.9) and the integration together.
+- App 0.9: Settings has a "Home Assistant" row (not paired / waiting / connected now / last contact N min ago), Settings scrolls when it has more rows than fit, and the Home screen can no longer end up with nothing focused (a D-pad press always lands on a tile).
 ## 0.4.4
 - App 0.8.2: film and episode progress saved before sync existed is now shared too, so every TV's Continue watching list matches (it used to show only what was watched after sync was added).
 

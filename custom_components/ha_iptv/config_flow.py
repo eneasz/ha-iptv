@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import secrets
 from typing import Any
@@ -12,6 +13,10 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResu
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import callback
 from homeassistant.helpers import selector
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
@@ -23,9 +28,25 @@ CONF_PROV_SERVER, CONF_PROV_USER, CONF_PROV_PASS = "provider_server", "provider_
 PAIR_WAIT = 125  # seconds; the stick gives up after 120
 
 
-def pair_code(ha_nonce: str, stick_nonce: str) -> str:
-    """The 4 digits both screens show (same rule as the app's Pairing.codeOf)."""
-    return "%04d" % (int.from_bytes(hashlib.sha256((ha_nonce + stick_nonce).encode()).digest()[:4], "big") % 10000)
+def pair_code(ha_nonce: str, ha_pub: str, stick_nonce: str, stick_pub: str) -> str:
+    """The 4 digits both screens show (same rule as the app's Pairing.codeOf). It covers both public keys, so a man in the middle
+    (who has to run two different key exchanges) makes the screens disagree."""
+    return "%04d" % (int.from_bytes(hashlib.sha256((ha_nonce + ha_pub + stick_nonce + stick_pub).encode()).digest()[:4], "big") % 10000)
+
+
+def pair_keypair() -> tuple[ec.EllipticCurvePrivateKey, str]:
+    """A throw-away P-256 key for one pairing; returns it with its public point (uncompressed, base64)."""
+    key = ec.generate_private_key(ec.SECP256R1())
+    raw = key.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+    return key, base64.b64encode(raw).decode()
+
+
+def pair_decrypt(key: ec.EllipticCurvePrivateKey, ha_pub: str, stick_pub: str, pair_id: str, iv: str, ct: str) -> str:
+    """Open the token the stick sealed with AES-GCM (key = SHA-256 of label, ECDH secret, both public points)."""
+    peer = base64.b64decode(stick_pub)
+    secret = key.exchange(ec.ECDH(), ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), peer))
+    k = hashlib.sha256(b"haiptv-pair-v1" + secret + base64.b64decode(ha_pub) + peer).digest()
+    return AESGCM(k).decrypt(base64.b64decode(iv), base64.b64decode(ct), pair_id.encode()).decode()
 _MP = selector.EntitySelector(selector.EntitySelectorConfig(domain="media_player"))
 
 
@@ -116,7 +137,11 @@ class HaIptvConfigFlow(ConfigFlow, domain=DOMAIN):
             except HaIptvError:
                 res = {"status": "pending"}
             if res.get("status") == "approved":
-                self._data = {**self._data, CONF_TOKEN: res["token"]}
+                try:
+                    token = pair_decrypt(self._pair["key"], self._pair["pub"], self._pair["spub"], self._pair["id"], res["iv"], res["ct"])
+                except (KeyError, ValueError, InvalidTag):
+                    return "unknown"
+                self._data = {**self._data, CONF_TOKEN: token}
                 return "approved"
             if res.get("status") in ("denied", "expired", "unknown"):
                 return res["status"]
@@ -127,13 +152,17 @@ class HaIptvConfigFlow(ConfigFlow, domain=DOMAIN):
         """Ask the stick to show Approve/Deny; the same 4-digit code appears here and on the TV."""
         if not self._pair:
             nonce = secrets.token_hex(8)
+            key, pub = pair_keypair()
             try:
-                res = await self._api().pair_request(nonce)
+                res = await self._api().pair_request(nonce, pub)
             except HaIptvError:
                 return self.async_abort(reason="cannot_connect")
             if not res.get("ok"):
                 return self.async_abort(reason="pair_busy" if res.get("error") == "busy" else "pair_closed")
-            self._pair = {"id": res["id"], "nonce": nonce, "code": pair_code(nonce, res["snonce"])}
+            if not res.get("spub"):
+                return self.async_abort(reason="pair_outdated")      # an app without encryption: never accept a token in the clear
+            self._pair = {"id": res["id"], "nonce": nonce, "key": key, "pub": pub, "spub": res["spub"],
+                          "code": pair_code(nonce, pub, res["snonce"], res["spub"])}
             self._name = self._name or str(res.get("name") or "")
         if self._task is None:
             self._task = self.hass.async_create_task(self._wait_for_approval())
@@ -143,7 +172,7 @@ class HaIptvConfigFlow(ConfigFlow, domain=DOMAIN):
         status = self._task.result()
         self._task = None
         if status != "approved":
-            self._reason = "pair_denied" if status == "denied" else "pair_expired"
+            self._reason = {"denied": "pair_denied", "unknown": "pair_failed_secure"}.get(status, "pair_expired")
             return self.async_show_progress_done(next_step_id="pair_failed")
         return self.async_show_progress_done(next_step_id="pair_done")
 

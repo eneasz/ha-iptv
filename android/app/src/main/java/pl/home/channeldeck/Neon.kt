@@ -17,6 +17,7 @@ import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import coil.load
 import kotlin.math.PI
@@ -417,8 +418,15 @@ class HomeView(ctx: Context, val onLive: () -> Unit, val onResume: () -> Unit, v
 
     private var hasResume = false; private var hasOther = false
     private fun heroVisibility() {
+        val lost = other.hasFocus() || resume.hasFocus()          // the card holding focus may be swapped out or hidden
         other.visibility = if (hasOther) View.VISIBLE else View.GONE
         resume.visibility = if (hasResume && !hasOther) View.VISIBLE else View.GONE
+        if (lost && !other.hasFocus() && !resume.hasFocus()) post { focusDefault() }
+    }
+    /** If nothing on Home holds focus (it was hidden under the cursor), the next D-pad press must land somewhere, not do nothing. */
+    override fun dispatchKeyEvent(e: android.view.KeyEvent): Boolean {
+        if (e.action == android.view.KeyEvent.ACTION_DOWN && findFocus() == null && e.keyCode in android.view.KeyEvent.KEYCODE_DPAD_UP..android.view.KeyEvent.KEYCODE_DPAD_RIGHT) { focusDefault(); return true }
+        return super.dispatchKeyEvent(e)
     }
     fun setResume(title: String?, sub: String?, icon: String? = null) {
         hasResume = title != null; heroVisibility()
@@ -442,14 +450,18 @@ class SettingsPanel(ctx: Context, rows: List<NeonRow>, val onClose: () -> Unit) 
     private val d = ctx.resources.displayMetrics.density
     init {
         background = Neon.Backdrop(); isClickable = true
-        val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(0, (28 * d).toInt(), 0, (28 * d).toInt()) }
         val head = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, 0, 0, (16 * d).toInt()) }
         head.addView(OrbView(ctx).apply { energy = 0.2f }, LinearLayout.LayoutParams((56 * d).toInt(), (56 * d).toInt()))
         head.addView(TextView(ctx).apply { text = "Settings"; setTextColor(Neon.TEXT); textSize = 30f; typeface = Typeface.create("sans-serif-light", Typeface.NORMAL); setPadding((14 * d).toInt(), 0, 0, 0) })
         col.addView(head)
         rows.forEach { col.addView(it, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = (10 * d).toInt() }) }
         col.addView(Neon.keyHint(ctx, "BACK", "to return"))
-        addView(col, LayoutParams((640 * d).toInt(), -2, Gravity.CENTER))
+        // more rows than fit on a 1080p screen: scroll, and the focused row is always brought into view
+        val sv = ScrollView(ctx).apply { isFillViewport = true; isVerticalScrollBarEnabled = false; overScrollMode = OVER_SCROLL_NEVER; clipChildren = false; clipToPadding = false }
+        val frame = FrameLayout(ctx).apply { clipChildren = false; addView(col, LayoutParams((640 * d).toInt(), -2, Gravity.CENTER_HORIZONTAL)) }
+        sv.addView(frame, ViewGroup.LayoutParams(-1, -2))
+        addView(sv, LayoutParams(-1, -1))
         rows.firstOrNull()?.let { post { it.requestFocus() } }
     }
 }

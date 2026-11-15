@@ -51,9 +51,35 @@ def api():
         a.command = AsyncMock(return_value={"ok": True})
         a.sync = AsyncMock(return_value={"device": "aaaa", "name": "Fire TV", "epoch": "e1", "seq": 0, "entries": {}})
         a.sync_push = AsyncMock(return_value={"ok": True, "applied": 0})
-        a.pair_request = AsyncMock(return_value={"ok": True, "id": "p1", "snonce": "5a5a5a5a5a5a5a5a", "name": "Bedroom"})
-        a.pair_poll = AsyncMock(return_value={"status": "approved", "token": "tok123"})
+        stick = FakeStick()
+        a.stick = stick
+        a.pair_request = AsyncMock(side_effect=stick.request)
+        a.pair_poll = AsyncMock(side_effect=stick.poll)
         yield a
+
+
+class FakeStick:
+    """The TV's half of the encrypted pairing (same maths as Pairing.kt)."""
+    def __init__(self):
+        self.token = "tok123"
+
+    async def request(self, nonce, pub):
+        import base64, hashlib
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+        self.key = ec.generate_private_key(ec.SECP256R1())
+        self.spub = self.key.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+        peer = base64.b64decode(pub)
+        secret = self.key.exchange(ec.ECDH(), ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), peer))
+        self.k = hashlib.sha256(b"haiptv-pair-v1" + secret + peer + self.spub).digest()
+        return {"ok": True, "id": "p1", "snonce": "5a5a5a5a5a5a5a5a", "spub": base64.b64encode(self.spub).decode(), "name": "Bedroom"}
+
+    async def poll(self, pair_id, nonce):
+        import base64, os
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        iv = os.urandom(12)
+        return {"status": "approved", "iv": base64.b64encode(iv).decode(),
+                "ct": base64.b64encode(AESGCM(self.k).encrypt(iv, self.token.encode(), pair_id.encode())).decode()}
 
 
 async def _hang():

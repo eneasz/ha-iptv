@@ -326,7 +326,25 @@ async def test_pair_closed(hass, api):
 
 def test_pair_code_matches_app_rule():
     from custom_components.ha_iptv.config_flow import pair_code
-    assert len(pair_code("aa" * 8, "bb" * 8)) == 4 and pair_code("a" * 16, "b" * 16) != pair_code("a" * 16, "c" * 16)
+    assert len(pair_code("aa" * 8, "P", "bb" * 8, "S")) == 4
+    # swapping a public key (a man in the middle) changes the digits
+    assert pair_code("a" * 16, "P", "b" * 16, "S") != pair_code("a" * 16, "P", "b" * 16, "X")
+
+
+async def test_pair_refuses_app_without_encryption(hass, api):
+    api.pair_request = AsyncMock(return_value={"ok": True, "id": "p1", "snonce": "5a5a5a5a5a5a5a5a", "name": "Old"})
+    r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"}, data={"host": "1.2.3.4", "port": 8765, "token": ""})
+    assert r["type"] == "abort" and r["reason"] == "pair_outdated"
+
+
+async def test_pair_token_tampered_is_rejected(hass, api):
+    good = api.pair_poll.side_effect
+    async def bad(pair_id, nonce):
+        r = await good(pair_id, nonce); r["ct"] = r["ct"][:-4] + "AAAA"; return r
+    api.pair_poll = AsyncMock(side_effect=bad)
+    r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"}, data={"host": "1.2.3.4", "port": 8765, "token": ""})
+    r = await _approve(hass, api, r)
+    assert r["type"] == "abort" and r["reason"] == "pair_failed_secure"
 
 
 async def test_copy_failure_keeps_the_tv(hass, api, entry):
