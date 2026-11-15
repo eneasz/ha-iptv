@@ -1,4 +1,7 @@
 # Changelog
+## 0.4.3
+- App 0.8.1: fixed a black screen after the first channel load on a newly paired TV. A command from Home Assistant that arrived while channels were loading (for example the TV's name) hid the splash without showing the Home screen. The name command now runs at once, and the Home screen always appears when a command starts no playback.
+
 ## 0.4.2
 - If a TV has no provider login and none can be copied, the setup asks for it in Home Assistant (server, username, password; sent to the TV, never stored). The same fields are in the integration's Configure dialog to set or replace the login later.
 - App 0.8: the "Connected to Home Assistant" screen offers "Enter provider details on this TV instead" next to Cancel.

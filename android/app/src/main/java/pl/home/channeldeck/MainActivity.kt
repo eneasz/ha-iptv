@@ -538,7 +538,11 @@ class MainActivity : Activity() {
             scope.launch(Dispatchers.Default) { repo.warm() }
             scope.launch { kotlinx.coroutines.delay(4000); if (!vod.ready) vod.loadCache(); if (!ser.ready) ser.loadCache(); updateHomeCounts() }
             val pc = pendingCmd; pendingCmd = null
-            if (pc != null) { dismissSplash(); runCommand(pc) }      // a command from HA plays straight away
+            if (pc != null) {                                       // a command from HA plays straight away
+                dismissSplash(); runCommand(pc)
+                // a command that plays nothing (or fails) must never leave an empty screen behind
+                scope.launch { kotlinx.coroutines.delay(2500); if (playing == null && vodPlaying == null && home.visibility != View.VISIBLE && overlay.visibility != View.VISIBLE && moviesView.visibility != View.VISIBLE && seriesView.visibility != View.VISIBLE && settingsPanel == null) showHome() }
+            }
             else { val wait = (1900 - (android.os.SystemClock.uptimeMillis() - splashAt)).coerceAtLeast(0); scope.launch { kotlinx.coroutines.delay(wait); if (playing == null) showHome() else dismissSplash() } }
         } else {
             groupAdapter.activeIdx = repo.groups.indexOfFirst { it.id == browseGroup }
@@ -1575,7 +1579,7 @@ class MainActivity : Activity() {
     private fun runCommand(j: JSONObject): JSONObject {
         val ok = JSONObject().put("ok", true)
         fun err(m: String) = JSONObject().put("ok", false).put("error", m)
-        if (!dataReady && j.optString("cmd") != "refresh") { pendingCmd = j; return JSONObject().put("ok", true).put("queued", true) }
+        if (!dataReady && j.optString("cmd") !in setOf("refresh", "config")) { pendingCmd = j; return JSONObject().put("ok", true).put("queued", true) }
         return when (val cmd = j.optString("cmd")) {
             "play" -> {
                 val gh = j.optString("group").takeIf { it.isNotEmpty() }
