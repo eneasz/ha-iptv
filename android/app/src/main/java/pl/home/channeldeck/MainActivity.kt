@@ -60,16 +60,14 @@ class MainActivity : Activity() {
     private lateinit var hint: TextView
     private lateinit var banner: TextView
     private lateinit var status: TextView
-    private var dotStep = 0
+    private lateinit var bufferOrb: OrbView
+    /** While the status line is just "…" (buffering), show the splash orb, small, instead of text. */
     private val dotsTick: Runnable = object : Runnable {
         override fun run() {
-            if (status.visibility == View.VISIBLE && status.text.toString().let { it == "…" || it.startsWith("●") }) {
-                dotStep = (dotStep + 1) % 4
-                val sp = android.text.SpannableString("● ● ●")
-                for (i in 0 until 3) sp.setSpan(android.text.style.ForegroundColorSpan(if (i < dotStep) Color.WHITE else Color.argb(70, 255, 255, 255)), i * 2, i * 2 + 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                status.text = sp
-            }
-            status.postDelayed(this, 300)
+            val buffering = status.visibility == View.VISIBLE && status.text.toString() == "…"
+            if (buffering) { if (bufferOrb.visibility != View.VISIBLE) { bufferOrb.visibility = View.VISIBLE; bufferOrb.bringToFront() }; status.alpha = 0f }
+            else { if (bufferOrb.visibility == View.VISIBLE) bufferOrb.visibility = View.GONE; status.alpha = 1f }
+            status.postDelayed(this, 120)
         }
     }
     private lateinit var groupRv: RecyclerView
@@ -221,7 +219,9 @@ class MainActivity : Activity() {
             setPadding(dp(60), dp(20), dp(60), dp(20))
         }
         root.addView(status, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
-        // animated "…" while buffering: three dots light up one after another
+        bufferOrb = OrbView(this).apply { energy = 0.7f; glow = 1f; visibility = View.GONE }
+        root.addView(bufferOrb, FrameLayout.LayoutParams(dp(110), dp(110), Gravity.CENTER))
+        // buffering: the splash orb, small (see dotsTick)
         status.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
             override fun onViewAttachedToWindow(v: View) { status.post(dotsTick) }
             override fun onViewDetachedFromWindow(v: View) { status.removeCallbacks(dotsTick) }
@@ -818,6 +818,7 @@ class MainActivity : Activity() {
     }
     private fun stopVod(reopen: Boolean = true) {
         val m = vodPlaying ?: return
+        closeTracks()
         player?.let { if (reopen && it.playbackState == Player.STATE_READY) vod.saveProgress(m, it.currentPosition, it.duration); it.stop(); it.clearMediaItems() }
         vodJob?.cancel(); vodBarJob?.cancel(); retryJob?.cancel()
         vodPlaying = null; vodBar.visibility = View.GONE; status.visibility = View.GONE
@@ -832,10 +833,62 @@ class MainActivity : Activity() {
         vodBarJob?.cancel()
         vodBarJob = scope.launch { kotlinx.coroutines.delay(if (keep) 5000 else 4000); if (player?.isPlaying == true) vodBar.visibility = View.GONE else vodBarJob = null }
     }
+    // ---- audio / subtitle picker (MENU while a film plays)
+    private var trackPanel: FrameLayout? = null
+    private fun closeTracks() { trackPanel?.let { root.removeView(it) }; trackPanel = null }
+    private fun showTracks() {
+        val p = player ?: return
+        val ctx = this
+        val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        fun heading(t: String) = TextView(ctx).apply { text = t; setTextColor(Neon.CYAN); textSize = 14f; letterSpacing = 0.2f; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); setPadding(dp(6), dp(14), 0, dp(8)) }
+        fun lang(f: androidx.media3.common.Format, n: Int): String {
+            val l = f.language
+            val name = if (l.isNullOrEmpty() || l == "und") "Track $n" else java.util.Locale(l).getDisplayLanguage(java.util.Locale.ENGLISH).replaceFirstChar { it.uppercase() }
+            return (f.label?.takeIf { it.isNotBlank() && !it.equals(name, true) }?.let { "$name · $it" } ?: name)
+        }
+        var first: View? = null; var audioPick: View? = null; var inSubs = false; var n = 0
+        fun add(title: String, value: String, selected: Boolean, action: () -> Unit) {
+            val r = NeonRow(ctx, (if (selected) "✓  " else "     ") + title, value)
+            if (value.isEmpty()) r.valueTv.visibility = View.GONE
+            r.minimumHeight = dp(58)
+            r.setOnClickListener { action(); closeTracks() }
+            col.addView(r, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
+            if (first == null) first = r
+            if (selected && audioPick == null && n > 0 && !inSubs) audioPick = r
+        }
+        val groups = p.currentTracks.groups
+        col.addView(heading("AUDIO"))
+        for (g in groups) if (g.type == C.TRACK_TYPE_AUDIO) for (i in 0 until g.length) {
+            n++; val f = g.getTrackFormat(i)
+            add(lang(f, n), listOfNotNull(Quality.acodec(f.sampleMimeType).takeIf { it.isNotEmpty() }, f.channelCount.takeIf { it > 0 }?.let { "$it ch" }).joinToString(" · "), g.isTrackSelected(i)) {
+                p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().setOverrideForType(androidx.media3.common.TrackSelectionOverride(g.mediaTrackGroup, listOf(i))).build()
+            }
+        }
+        if (n == 0) col.addView(TextView(ctx).apply { text = "Only one audio track"; setTextColor(Neon.MUTED); textSize = 16f; setPadding(dp(6), 0, 0, dp(6)) })
+        col.addView(heading("SUBTITLES")); inSubs = true
+        val textOn = !p.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT) && groups.any { it.type == C.TRACK_TYPE_TEXT && it.isSelected }
+        add("Off", "", !textOn) { p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build() }
+        var t = 0
+        for (g in groups) if (g.type == C.TRACK_TYPE_TEXT) for (i in 0 until g.length) {
+            t++; val f = g.getTrackFormat(i)
+            add(lang(f, t), "", textOn && g.isTrackSelected(i)) {
+                p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).setOverrideForType(androidx.media3.common.TrackSelectionOverride(g.mediaTrackGroup, listOf(i))).build()
+            }
+        }
+        col.addView(Neon.keyHint(ctx, "BACK", "to close"))
+        val sv = android.widget.ScrollView(ctx).apply { isVerticalScrollBarEnabled = false; addView(col) }
+        val panel = FrameLayout(ctx).apply {
+            setBackgroundColor(Color.argb(235, 4, 8, 22)); isClickable = true
+            addView(sv, FrameLayout.LayoutParams(dp(520), -1, Gravity.CENTER).apply { topMargin = dp(36); bottomMargin = dp(36) })
+        }
+        trackPanel = panel; root.addView(panel, FrameLayout.LayoutParams(-1, -1)); vodBar.visibility = View.GONE; vodBarJob?.cancel()
+        panel.post { (audioPick ?: first)?.requestFocus() }
+    }
     private val clearNote = Runnable { vodBar.note = ""; player?.let { p -> vodPlaying?.let { vodBar.update(it.title, p.currentPosition, p.duration, !p.isPlaying) } } }
     private fun vodKey(e: KeyEvent): Boolean {
         if (e.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(e)
         val p = player ?: return super.dispatchKeyEvent(e)
+        if (trackPanel != null) { if (e.keyCode == KeyEvent.KEYCODE_BACK || e.keyCode == KeyEvent.KEYCODE_MENU) { closeTracks(); return true }; return super.dispatchKeyEvent(e) }
         fun seek(ms: Long) {
             val dur = if (p.duration > 0) p.duration else Long.MAX_VALUE / 4
             p.seekTo((p.currentPosition + ms).coerceIn(0L, (dur - 2000).coerceAtLeast(0L)))
@@ -853,6 +906,7 @@ class MainActivity : Activity() {
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { if (e.repeatCount == 0) { if (p.isPlaying) p.pause() else p.play(); showVodBar() } }
             KeyEvent.KEYCODE_MEDIA_PLAY -> { p.play(); showVodBar() }
             KeyEvent.KEYCODE_MEDIA_PAUSE -> { p.pause(); showVodBar() }
+            KeyEvent.KEYCODE_MENU -> showTracks()
             KeyEvent.KEYCODE_BACK -> stopVod()
             else -> return super.dispatchKeyEvent(e)
         }

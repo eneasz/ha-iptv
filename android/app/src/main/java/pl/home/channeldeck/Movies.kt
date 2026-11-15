@@ -594,7 +594,7 @@ class VodBar(ctx: Context) : FrameLayout(ctx) {
         val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding((48 * d).toInt(), (110 * d).toInt(), (48 * d).toInt(), (40 * d).toInt()) }
         title.apply { setTextColor(Neon.TEXT); textSize = 22f; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); setSingleLine() }
         time.apply { setTextColor(Neon.TEXT); textSize = 15f; setPadding(0, (4 * d).toInt(), 0, 0) }
-        hint.apply { setTextColor(Neon.withAlpha(Neon.TEXT, 220)); textSize = 17f; setPadding(0, (6 * d).toInt(), 0, 0); text = "◀ ▶  10 s     ▲ ▼  1 min     OK  pause     BACK  stop" }
+        hint.apply { setTextColor(Neon.withAlpha(Neon.TEXT, 220)); textSize = 17f; setPadding(0, (6 * d).toInt(), 0, 0); text = "◀ ▶  10 s     ▲ ▼  1 min     OK  pause     ≡  audio & subtitles     BACK  stop" }
         col.addView(title)
         col.addView(track, LinearLayout.LayoutParams(-1, (14 * d).toInt()).apply { topMargin = (10 * d).toInt() })
         col.addView(time); col.addView(hint)
