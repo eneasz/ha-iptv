@@ -464,12 +464,19 @@ class MainActivity : Activity() {
         sampleJob?.cancel()
         sampleJob = scope.launch {
             val tv = playerView.videoSurfaceView as? android.view.TextureView ?: return@launch
-            var dark = 0; var same = 0; var last = 0L; var stuck = 0; var lastPos = -1L; var good = 0
+            var dark = 0; var same = 0; var last = 0L; var stuck = 0; var lastPos = -1L; var good = 0; var buffering = 0
             while (true) {
                 kotlinx.coroutines.delay(2000)
                 val p = player ?: return@launch
                 if (playing?.id != c.id) return@launch
-                if (!p.isPlaying) { dark = 0; same = 0; stuck = 0; continue }
+                if (!p.isPlaying) {
+                    dark = 0; same = 0; stuck = 0
+                    // stuck start: the player keeps "buffering" (decoder never starts) -> retry on the other stream format
+                    buffering = if (p.playWhenReady && p.playbackState == Player.STATE_BUFFERING) buffering + 1 else 0
+                    if (buffering >= 6) { if (recover(c, "not starting", alt = true)) return@launch else buffering = 0 }
+                    continue
+                }
+                buffering = 0
                 // anti-freeze: playback "running" but the position does not advance (decoder/audio stall) -> restart the stream
                 val pos = p.currentPosition
                 stuck = if (pos == lastPos) stuck + 1 else 0; lastPos = pos
@@ -495,11 +502,13 @@ class MainActivity : Activity() {
     }
 
     /** Restart the current channel after a stall/freeze (max 3 times per channel, then the problem is reported instead). */
-    private fun recover(c: Channel, why: String): Boolean {
+    private fun recover(c: Channel, why: String, alt: Boolean = false): Boolean {
         if (playing?.id != c.id || recoveries >= 3) return false
         recoveries++
         flashBanner("Stream $why – restarting ($recoveries/3)")
-        play(c, fmt = prefs.format, retry = true)
+        // a stream that never starts is retried on the other format (ts <-> m3u8); only the first try, then back to the usual one
+        val fmt = if (alt && recoveries == 1) (if (prefs.format == "m3u8") "ts" else "m3u8") else prefs.format
+        play(c, fmt = fmt, retry = true)
         return true
     }
 
