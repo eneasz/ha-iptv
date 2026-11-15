@@ -77,6 +77,10 @@ class MainActivity : Activity() {
     private var movingIdx = -1
     private var moveSnapshot: List<Group> = emptyList()
     private var dataReady = false
+    private lateinit var splash: SplashView
+    private lateinit var home: HomeView
+    private var settingsPanel: SettingsPanel? = null
+    private var splashAt = 0L
     private var hideJob: Job? = null
     private var bannerJob: Job? = null
     private lateinit var infoPanel: InfoPanel
@@ -225,6 +229,11 @@ class MainActivity : Activity() {
         overlay.addView(hint, LinearLayout.LayoutParams(-1, -2))
         root.addView(overlay, FrameLayout.LayoutParams((resources.displayMetrics.widthPixels * 0.95f).toInt(), -1, Gravity.START))
         setHint()
+        home = HomeView(this, onLive = { openLive() }, onResume = { resumeFromHome() },
+            onSoon = { flashBanner("$it isn't available yet – HA IPTV does Live TV for now") }, onSettings = { openSettings() }).apply { visibility = View.GONE }
+        root.addView(home, FrameLayout.LayoutParams(-1, -1))
+        splash = SplashView(this); splashAt = android.os.SystemClock.uptimeMillis()
+        root.addView(splash, FrameLayout.LayoutParams(-1, -1))
     }
 
     private fun titled(title: String, rv: RecyclerView): LinearLayout = LinearLayout(this).apply {
@@ -277,7 +286,7 @@ class MainActivity : Activity() {
 
     // ---------------------------------------------------------------- data
     private fun loadData() {
-        status.visibility = View.VISIBLE; status.text = "Loading channels…"
+        splash.setStatus("Loading channels…")
         scope.launch {
             val cached = repo.loadCache()
             if (cached) applyData(firstTime = true)
@@ -285,18 +294,17 @@ class MainActivity : Activity() {
                 repo.refresh()
                 applyData(firstTime = !cached)
             } catch (e: Exception) {
-                if (!cached) status.text = "Could not load channels:\n${e.message}\n\nCheck server/login (push a new channeldeck.json) and reopen."
+                if (!cached) splash.setStatus("Could not load channels\n${e.message}")
             }
         }
     }
 
     /** Rebuild the lists; on first call restore last group/channel and start playing. */
     private fun applyData(firstTime: Boolean) {
-        if (repo.groups.isEmpty()) { status.text = "No channels returned by provider"; return }
+        if (repo.groups.isEmpty()) { splash.setStatus("No channels returned by provider"); return }
         dataReady = true
         refreshLists()
         if (firstTime) {
-            status.visibility = View.GONE
             val veryFirst = prefs.lastChannel.isEmpty()
             val gid = repo.groups.firstOrNull { it.id == prefs.lastGroup }?.id ?: repo.groups.first { !Repo.pseudo(it.id) }.id
             browseGroup = gid
@@ -305,8 +313,8 @@ class MainActivity : Activity() {
             showChannels(gid); playCtx = gid
             scope.launch(Dispatchers.Default) { repo.warm() }
             val pc = pendingCmd; pendingCmd = null
-            if (pc != null) runCommand(pc) else if (start != null) play(start, banner = true)
-            if (veryFirst && pc == null) showOverlay(focusGroups = true)   // very first launch
+            if (pc != null) { dismissSplash(); runCommand(pc) }      // a command from HA plays straight away
+            else { val wait = (1900 - (android.os.SystemClock.uptimeMillis() - splashAt)).coerceAtLeast(0); scope.launch { kotlinx.coroutines.delay(wait); if (playing == null) showHome() else dismissSplash() } }
         } else {
             groupAdapter.activeIdx = repo.groups.indexOfFirst { it.id == browseGroup }
             showChannels(browseGroup)
@@ -339,6 +347,7 @@ class MainActivity : Activity() {
     // ---------------------------------------------------------------- playback
     private fun play(c: Channel, banner: Boolean = false, fmt: String = prefs.format, ctx: String? = null, retry: Boolean = false) {
         playing = c; stopped = false; lastError = null
+        dismissSplash(); home.visibility = View.GONE; settingsPanel?.let { root.removeView(it); settingsPanel = null }
         if (ctx != null) playCtx = ctx else if (playCtx.isEmpty() || !repo.inGroup(playCtx, c.id)) playCtx = c.groupId
         tech = null; measuring = true; playEpg = null; playEpgLoading = c.epgId.isNotEmpty()
         measureJob?.cancel(); epgJob?.cancel()
@@ -557,8 +566,47 @@ class MainActivity : Activity() {
         resetHide()
     }
 
+    // ---------------------------------------------------------------- home / splash / settings
+    private fun dismissSplash() {
+        if (!::splash.isInitialized || splash.visibility != View.VISIBLE) return
+        splash.animate().alpha(0f).setDuration(380).withEndAction { splash.visibility = View.GONE; splash.alpha = 1f }.start()
+    }
+    private fun showHome() {
+        hideOverlay(); infoPanel.visibility = View.GONE
+        player?.pause()
+        val c = playing ?: repo.channel(prefs.lastChannel)
+        home.setResume(c?.name, c?.let { groupName(it) }, c?.icon)
+        home.live.sub = if (dataReady) "${repo.groups.count { !Repo.pseudo(it.id) }} groups" else ""
+        home.visibility = View.VISIBLE; home.alpha = 0f; home.animate().alpha(1f).setDuration(320).start()
+        dismissSplash(); banner.bringToFront(); home.focusDefault(); changed()
+    }
+    private fun openLive() {
+        home.visibility = View.GONE
+        (playing ?: repo.channel(prefs.lastChannel))?.let { c -> browseGroup = if (repo.groups.any { it.id == playCtx }) playCtx else c.groupId }
+        showOverlay(false)
+    }
+    private fun resumeFromHome() {
+        val c = playing ?: repo.channel(prefs.lastChannel)
+        if (c == null) { openLive(); return }
+        home.visibility = View.GONE
+        if (playing != null && !stopped) player?.play() else play(c, banner = true, ctx = prefs.lastGroup.takeIf { repo.inGroup(it, c.id) })
+    }
+    private fun openSettings() {
+        val fmt = NeonRow(this, "Stream format", prefs.format.uppercase() + "  ·  OK to switch (m3u8 ↔ ts)")
+        fmt.setOnClickListener { prefs.format = if (prefs.format == "m3u8") "ts" else "m3u8"; fmt.set(prefs.format.uppercase() + "  ·  OK to switch (m3u8 ↔ ts)") }
+        val refresh = NeonRow(this, "Refresh channel list", "Reload groups and channels from your provider")
+        refresh.setOnClickListener { scope.launch { refresh.set("Refreshing…"); try { repo.refresh(); applyData(false); refresh.set("Updated just now") } catch (e: Exception) { refresh.set("Failed: ${e.message}") } } }
+        val tok = prefs.token
+        val api = NeonRow(this, "Home Assistant API", "Port 8765  ·  token •••• ${tok.takeLast(4)}  ·  the full token goes into the HA integration setup")
+        val about = NeonRow(this, "About", "HA IPTV is a player only. It provides no channels, playlists or content – you bring your own subscription.")
+        about.valueTv.setSingleLine(false)
+        val panel = SettingsPanel(this, listOf(fmt, refresh, api, about)) { }
+        settingsPanel = panel; root.addView(panel, FrameLayout.LayoutParams(-1, -1)); banner.bringToFront()
+    }
+    private fun closeSettings() { settingsPanel?.let { root.removeView(it) }; settingsPanel = null; home.settings.requestFocus() }
+
     private fun hideOverlay() { overlay.visibility = View.GONE; hideJob?.cancel() }
-    private fun resetHide() { hideJob?.cancel(); hideJob = scope.launch { kotlinx.coroutines.delay(15000); if (movingIdx < 0) hideOverlay() } }
+    private fun resetHide() { hideJob?.cancel(); hideJob = scope.launch { kotlinx.coroutines.delay(15000); if (movingIdx < 0) { if (playing == null) showHome() else hideOverlay() } } }
     private fun scrollTo(rv: RecyclerView, pos: Int) { (rv.layoutManager as LinearLayoutManager).scrollToPositionWithOffset(pos, dp(120)) }
 
     private fun focusPos(rv: RecyclerView, pos: Int, tries: Int = 30) {
@@ -682,6 +730,11 @@ class MainActivity : Activity() {
 
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
         val k = e.keyCode
+        if (e.action == KeyEvent.ACTION_DOWN && (settingsPanel != null || (::home.isInitialized && home.visibility == View.VISIBLE) || (::splash.isInitialized && splash.visibility == View.VISIBLE))) {
+            if (k == KeyEvent.KEYCODE_BACK && settingsPanel != null) { closeSettings(); return true }
+            if (k == KeyEvent.KEYCODE_BACK && splash.visibility == View.VISIBLE) return true
+            return super.dispatchKeyEvent(e)     // Home/Settings use normal D-pad focus; BACK on Home leaves the app
+        }
         val isOk = k == KeyEvent.KEYCODE_DPAD_CENTER || k == KeyEvent.KEYCODE_ENTER
         if (e.action != KeyEvent.ACTION_DOWN) {
             if (isOk && favHold) { favHold = false; return true }     // swallow the release that ends a favourite-hold
@@ -749,7 +802,7 @@ class MainActivity : Activity() {
                 KeyEvent.KEYCODE_BACK -> {
                     // BACK steps back one view: first to the group that is playing, then to the picture
                     if (playing != null && browseGroup != playCtx && repo.groups.any { it.id == playCtx }) { browseGroup = playCtx; showOverlay(false) }
-                    else hideOverlay()
+                    else showHome()
                     return true
                 }
                 KeyEvent.KEYCODE_MENU -> {
