@@ -334,62 +334,96 @@ class MainActivity : Activity() {
             if (approve) { prefs.paired = true; prefs.pairOpenUntil = 0L; if (setupForm != null && !prefs.configured) setupApproved() else flashBanner("Home Assistant connected") }
             pairPanel?.let { root.removeView(it) }; pairPanel = null
         }
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
-            setBackgroundColor(Color.parseColor("#F0101820")); setPadding(dp(200), dp(100), dp(200), dp(60)); isClickable = true
+        val box = FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#0A1018")); isClickable = true; clipChildren = false }
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; clipChildren = false; clipToPadding = false
+            background = GradientDrawable().apply { setColor(Color.parseColor("#141C27")); cornerRadius = dp(24).toFloat() }
+            setPadding(dp(70), dp(34), dp(70), dp(40))
         }
-        fun t(x: String, sz: Float, c: Int) = TextView(this).apply { text = x; textSize = sz; setTextColor(c); gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(8)) }
-        box.addView(t("Home Assistant wants to connect", 26f, Color.WHITE))
-        box.addView(t(r.code, 110f, Neon.CYAN).apply { typeface = Typeface.MONOSPACE; letterSpacing = 0.25f })
-        box.addView(t("Approve only if Home Assistant shows the same code. Expires in 2 minutes.", 22f, Color.parseColor("#B8C0CC")))
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, dp(20), 0, 0) }
-        val ok = Button(this).apply { text = "Approve"; isEnabled = false; setOnClickListener { close(true) } }
-        val no = Button(this).apply { text = "Deny"; setOnClickListener { close(false) } }
-        row.addView(no); row.addView(ok); box.addView(row)
+        fun t(x: String, sz: Float, c: Int, bold: Boolean = false) = TextView(this).apply { text = x; textSize = sz; setTextColor(c); gravity = Gravity.CENTER; setPadding(0, dp(6), 0, dp(6)); if (bold) setTypeface(typeface, Typeface.BOLD) }
+        card.addView(t("Home Assistant wants to connect", 28f, Color.WHITE))
+        card.addView(t(r.code.substring(0, 2) + "   " + r.code.substring(2), 110f, Neon.CYAN).apply { typeface = Typeface.MONOSPACE })
+        card.addView(t("Approve only if Home Assistant shows the same code.", 26f, Color.WHITE, true))
+        card.addView(t("This code is valid for 2 minutes.", 19f, Color.parseColor("#B8C0CC")))
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, dp(22), 0, 0); clipChildren = false; clipToPadding = false }
+        fun big(label: String, fill: Int, edge: Int) = Button(this).apply { text = label; textSize = 26f; setPadding(dp(10), dp(14), dp(10), dp(14)); styleButton(this, fill, edge) }
+        val no = big("✕  Deny", GREY, Color.parseColor("#5A6A80")).apply { setOnClickListener { close(false) } }
+        val ok = big("Approve (2)", Color.parseColor("#1F7A4D"), Color.parseColor("#3FBF86")).apply { isEnabled = false; setOnClickListener { close(true) } }
+        row.addView(no, LinearLayout.LayoutParams(dp(200), dp(66)).apply { rightMargin = dp(36) }); row.addView(ok, LinearLayout.LayoutParams(dp(200), dp(66)))
+        card.addView(row)
+        box.addView(card, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         pairPanel = box; root.addView(box, FrameLayout.LayoutParams(-1, -1)); no.requestFocus()
-        scope.launch { kotlinx.coroutines.delay(1500); ok.isEnabled = true }       // a stray OK press must not approve
+        scope.launch {                                              // a stray OK press must not approve: Approve unlocks after 1.5 s
+            kotlinx.coroutines.delay(750); ok.text = "Approve (1)"
+            kotlinx.coroutines.delay(750); ok.text = "✓  Approve"; ok.isEnabled = true
+        }
         scope.launch { kotlinx.coroutines.delay(Pairing.TTL); if (pairPanel === box) { pairing.poll(r.id, r.ha); pairPanel?.let { root.removeView(it) }; pairPanel = null } }
     }
 
     private var setupForm: FrameLayout? = null
     private var setupJob: Job? = null
-    private val dim = Color.parseColor("#B8C0CC")
+    private val dim = Color.parseColor("#C0C8D4")
 
     private fun showSetup() { status.visibility = View.GONE
-        val f = FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#0E141C")); setPadding(dp(96), dp(54), dp(96), dp(54)) }
+        val f = FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#0E141C")); setPadding(dp(96), dp(54), dp(96), dp(54)); clipChildren = false; clipToPadding = false }
         setupForm = f; root.addView(f, FrameLayout.LayoutParams(-1, -1)); setupChoice() }
 
     private fun txt(t: String, sz: Float, c: Int = Color.WHITE, bold: Boolean = false) = TextView(this).apply {
         text = t; textSize = sz; setTextColor(c); if (bold) setTypeface(typeface, Typeface.BOLD) }
-    private fun screen(build: LinearLayout.() -> Unit): LinearLayout {
+    private fun screen(scroll: Boolean = false, build: LinearLayout.() -> Unit): LinearLayout {
         setupJob?.cancel()
         val f = setupForm ?: return LinearLayout(this)
         f.removeAllViews()
-        return LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; build(); f.addView(this, FrameLayout.LayoutParams(-1, -1)) }
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false; build() }
+        if (scroll) f.addView(android.widget.ScrollView(this).apply { isFillViewport = true; clipChildren = false; clipToPadding = false; isVerticalScrollBarEnabled = false
+            addView(col, FrameLayout.LayoutParams(-1, -2)) }, FrameLayout.LayoutParams(-1, -1))
+        else f.addView(col, FrameLayout.LayoutParams(-1, -1))
+        return col
     }
+    /** Rounded box with a thick yellow focus ring (and a dark gap) – used by every focusable thing in the setup flow. Colours stay fixed; only ring + size signal focus. */
+    private fun ringBg(fill: Int, edge: Int, locked: Boolean = false): StateListDrawable {
+        fun box(c: Int, stroke: Int, w: Int) = GradientDrawable().apply { setColor(c); cornerRadius = dp(12).toFloat(); if (w > 0) setStroke(dp(w), stroke) }
+        val ring = android.graphics.drawable.LayerDrawable(arrayOf(box(Neon.YELLOW, 0, 0), box(Color.parseColor("#0D141C"), 0, 0), box(fill, edge, 2))).apply {
+            setLayerInset(1, dp(4), dp(4), dp(4), dp(4)); setLayerInset(2, dp(6), dp(6), dp(6), dp(6)) }
+        return StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_focused), ring)
+            addState(intArrayOf(-android.R.attr.state_enabled), box(Color.parseColor("#3A4656"), Color.parseColor("#4A566B"), 2))
+            addState(intArrayOf(), box(fill, edge, 2))
+        }
+    }
+    private fun styleButton(b: Button, fill: Int, edge: Int) {
+        b.background = ringBg(fill, edge); b.isAllCaps = false; b.stateListAnimator = null
+        b.setTextColor(android.content.res.ColorStateList(arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()), intArrayOf(Color.parseColor("#99FFFFFF"), Color.WHITE)))
+        b.setOnFocusChangeListener { v, f -> v.animate().scaleX(if (f) 1.06f else 1f).scaleY(if (f) 1.06f else 1f).setDuration(120).start() }
+    }
+    private val BLUE = Color.parseColor("#1F4FD8"); private val GREY = Color.parseColor("#2A3442")
     private fun btn(label: String, primary: Boolean, go: () -> Unit) = Button(this).apply {
-        text = label; textSize = if (primary) 24f else 18f; isAllCaps = false; setOnClickListener { go() }
-        setPadding(dp(30), dp(14), dp(30), dp(14))
+        text = label; textSize = if (primary) 24f else 18f; setOnClickListener { go() }
+        setPadding(dp(34), dp(14), dp(34), dp(14))
+        if (primary) styleButton(this, BLUE, Color.parseColor("#6D8CFF")) else styleButton(this, GREY, Color.parseColor("#5A6A80"))
     }
 
     /** 1: how do you want to set this TV up? */
     private fun setupChoice() { screen {
         addView(txt("Set up this TV", 38f, bold = true))
-        addView(txt("Choose how to connect.", 22f, dim).apply { setPadding(0, dp(6), 0, dp(36)) })
+        addView(txt("How do you want to connect this TV?", 24f, dim).apply { setPadding(0, dp(6), 0, dp(36)) })
         val ha = btn("Set up with Home Assistant", true) { setupWaiting() }
         addView(ha, LinearLayout.LayoutParams(-2, -2))
-        addView(txt("Recommended. No typing needed.", 18f, dim).apply { setPadding(dp(6), dp(8), 0, dp(40)) })
+        addView(txt("Recommended · no typing on the TV", 21f, Color.parseColor("#D5DBE5")).apply { setPadding(dp(6), dp(8), 0, dp(40)) })
         addView(btn("Enter provider details on this TV", false) { setupManual() }, LinearLayout.LayoutParams(-2, -2))
-        addView(txt("This TV is called “${prefs.sync.deviceName}”.", 16f, dim).apply { setPadding(0, dp(40), 0, 0) })
+        addView(txt("This TV is called “${prefs.sync.deviceName}”.", 21f, Color.parseColor("#C9D1DC")).apply { setPadding(0, dp(40), 0, 0) })
         ha.requestFocus()
     } }
 
     /** 2: Home Assistant path – what to do over there. Hints appear if nothing happens. */
     private fun setupWaiting() { var hint: TextView? = null
         screen {
-            addView(txt("Waiting for Home Assistant…", 34f, Neon.CYAN, true))
+            addView(LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                val dot = txt("●", 30f, Neon.CYAN).apply { setPadding(0, 0, dp(16), 0) }
+                android.animation.ObjectAnimator.ofFloat(dot, "alpha", 1f, 0.25f).apply { duration = 900; repeatMode = android.animation.ValueAnimator.REVERSE; repeatCount = android.animation.ValueAnimator.INFINITE; start() }
+                addView(dot); addView(txt("Waiting for Home Assistant", 34f, Neon.CYAN, true)) })
             addView(txt("1.  On your phone or computer, open Home Assistant.\n2.  Go to Settings, then Devices & services.\n3.  Find “HA IPTV – ${prefs.sync.deviceName}” and click Configure.", 24f).apply { setLineSpacing(0f, 1.25f); setPadding(0, dp(24), 0, dp(14)) })
-            addView(txt("A code will appear here and there. Press OK only if both codes match.", 20f, dim))
+            addView(txt("When a code appears here and in Home Assistant, check that they match, then press Approve with your remote.", 21f, dim))
             hint = txt("", 20f, Neon.YELLOW).apply { setPadding(0, dp(22), 0, 0) }; addView(hint)
             addView(View(this@MainActivity), LinearLayout.LayoutParams(1, 0, 1f))
             addView(txt("Details: ${localIp() ?: "no network"} · port 8765", 16f, dim).apply { setPadding(0, 0, 0, dp(14)) })
@@ -403,16 +437,25 @@ class MainActivity : Activity() {
     }
 
     /** 3: typing the provider login with the remote – kept as small as possible. */
-    private fun setupManual() { screen {
+    private fun setupManual() { screen(scroll = true) {
         addView(btn("‹ Back", false) { setupChoice() }, LinearLayout.LayoutParams(-2, -2))
-        addView(txt("Enter provider details", 34f, bold = true).apply { setPadding(0, dp(10), 0, dp(14)) })
-        fun field(h: String, pw: Boolean = false) = EditText(this@MainActivity).apply {
-            hint = h; setTextColor(Color.WHITE); setHintTextColor(Color.GRAY); textSize = 22f; setSingleLine()
-            inputType = InputType.TYPE_CLASS_TEXT or (if (pw) InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_TEXT_VARIATION_URI) }
-        val s = field("Server address, e.g. http://host:port"); val u = field("Username"); val p = field("Password", true)
-        addView(s); addView(u); addView(p)
-        addView(android.widget.CheckBox(this@MainActivity).apply { text = "Show password"; setTextColor(dim); textSize = 18f
-            setOnCheckedChangeListener { _, on -> p.inputType = InputType.TYPE_CLASS_TEXT or (if (on) InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD else InputType.TYPE_TEXT_VARIATION_PASSWORD); p.setSelection(p.text.length) } })
+        addView(txt("Enter provider details", 30f, bold = true).apply { setPadding(0, dp(6), 0, dp(0)) })
+        addView(txt("Your IPTV provider's server address, username and password.", 19f, dim).apply { setPadding(0, 0, 0, dp(4)) })
+        fun field(label: String, hint: String, pw: Boolean = false): EditText {
+            addView(txt(label, 19f, Color.parseColor("#D5DBE5")).apply { setPadding(dp(4), dp(4), 0, dp(1)) })
+            return EditText(this@MainActivity).apply {
+                this.hint = hint; setTextColor(Color.WHITE); setHintTextColor(Color.parseColor("#8A94A3")); textSize = 22f; setSingleLine()
+                background = ringBg(Color.parseColor("#1B2430"), Color.parseColor("#3A4656")); setPadding(dp(16), dp(6), dp(16), dp(6))
+                inputType = InputType.TYPE_CLASS_TEXT or (if (pw) InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_TEXT_VARIATION_URI)
+                addView(this, LinearLayout.LayoutParams(-1, -2))
+            }
+        }
+        val s = field("Server address", "http://host:port"); val u = field("Username", "username"); val p = field("Password", "password", true)
+        addView(android.widget.CheckBox(this@MainActivity).apply { text = "Show password"; setTextColor(dim); textSize = 20f
+            background = ringBg(Color.TRANSPARENT, Color.TRANSPARENT).also { }; setPadding(dp(10), dp(8), dp(14), dp(8))
+            buttonTintList = android.content.res.ColorStateList.valueOf(Neon.CYAN)
+            setOnCheckedChangeListener { _, on -> p.inputType = InputType.TYPE_CLASS_TEXT or (if (on) InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD else InputType.TYPE_TEXT_VARIATION_PASSWORD); p.setSelection(p.text.length) } },
+            LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
         val save = btn("Save", true) {
             prefs.server = s.text.toString().trim(); prefs.user = u.text.toString().trim(); prefs.pass = p.text.toString().trim()
             if (prefs.configured) finishSetup() }
@@ -430,8 +473,8 @@ class MainActivity : Activity() {
     /** After Approve, while Home Assistant still asks for the name: the TV must not look stuck. */
     private fun setupApproved() { screen {
         addView(txt("Connected to Home Assistant", 38f, Neon.CYAN, true))
-        addView(txt("Finish setting up on your phone or computer.\nThis screen updates by itself.", 24f, Color.WHITE).apply { setLineSpacing(0f, 1.25f); setPadding(0, dp(24), 0, dp(30)) })
-        val back = btn("Cancel and start over", false) {
+        addView(txt("Finish setting up on your phone or computer.\nThis screen updates by itself – you can put the remote down.", 24f, Color.WHITE).apply { setLineSpacing(0f, 1.25f); setPadding(0, dp(24), 0, dp(30)) })
+        val back = btn("Cancel setup", false) {
             prefs.token = java.security.SecureRandom().let { r -> ByteArray(12).also { r.nextBytes(it) }.joinToString("") { "%02x".format(it) } }; prefs.paired = false
             setupChoice() }
         addView(back, LinearLayout.LayoutParams(-2, -2)); back.requestFocus()
