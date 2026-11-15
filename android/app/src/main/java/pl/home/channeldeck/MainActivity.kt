@@ -1,7 +1,11 @@
 package pl.home.channeldeck
 
 import android.app.Activity
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
+import android.graphics.Paint
+import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
@@ -202,7 +206,8 @@ class MainActivity : Activity() {
         }
         val cols = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         regionAdapter = RowAdapter(
-            label = { it.name }, sub = { if (it.id == Repo.SEARCH) (if (repo.searchRes.isEmpty()) "" else repo.searchRes.size.toString()) else if (it.id == Repo.LIVE) it.channels.toString() else it.groups.toString() },
+            label = { it.name.removePrefix("● ").removePrefix("🔍 ") }, glyph = { when (it.id) { Repo.LIVE -> "live"; Repo.SEARCH -> "find"; else -> null } },
+            sub = { if (it.id == Repo.SEARCH) (if (repo.searchRes.isEmpty()) "" else repo.searchRes.size.toString()) else if (it.id == Repo.LIVE) it.channels.toString() else it.groups.toString() },
             onClick = { onRegionClick(it) }, onLong = { startMove(it, true) }, onFocus = { onRegionFocus(it) })
         regionRv = rv(regionAdapter)
         groupAdapter = RowAdapter(
@@ -214,11 +219,11 @@ class MainActivity : Activity() {
             icon = { it.icon }, tag = { offTag(it) ?: Quality.rowTag(it.name, prefs.measured(it.id)) })
         groupRv = rv(groupAdapter)
         chanRv = rv(chanAdapter)
-        cols.addView(titled("REGIONS", regionRv), LinearLayout.LayoutParams(0, -1, 0.17f))
+        cols.addView(titled("REGIONS", regionRv), LinearLayout.LayoutParams(0, -1, 0.23f))
         cols.addView(View(this).apply { setBackgroundColor(Neon.withAlpha(Neon.BLUE, 70)) }, LinearLayout.LayoutParams(dp(1), -1))
-        cols.addView(titled("GROUPS", groupRv), LinearLayout.LayoutParams(0, -1, 0.33f))
+        cols.addView(titled("GROUPS", groupRv), LinearLayout.LayoutParams(0, -1, 0.29f))
         cols.addView(View(this).apply { setBackgroundColor(Neon.withAlpha(Neon.BLUE, 70)) }, LinearLayout.LayoutParams(dp(1), -1))
-        cols.addView(titled("CHANNELS", chanRv), LinearLayout.LayoutParams(0, -1, 0.50f))
+        cols.addView(titled("CHANNELS", chanRv), LinearLayout.LayoutParams(0, -1, 0.48f))
         val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(24), dp(12), dp(24), 0) }
         head.addView(OrbView(this).apply { energy = 0.2f }, LinearLayout.LayoutParams(dp(48), dp(48)))
         head.addView(TextView(this).apply { text = "Live TV"; setTextColor(Neon.TEXT); textSize = 26f; typeface = Typeface.create("sans-serif-light", Typeface.NORMAL); setPadding(dp(14), 0, 0, 0) })
@@ -636,15 +641,26 @@ class MainActivity : Activity() {
     }
 
     private fun promptSearch() {
-        val et = android.widget.EditText(this).apply {
-            setSingleLine(); hint = "channel name"; setText(repo.searchQ); setSelectAllOnFocus(true)
-            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH; setTextColor(Color.WHITE); setHintTextColor(Color.GRAY)
+        val dlg = android.app.Dialog(this, android.R.style.Theme_Material_NoActionBar_Fullscreen)
+        val et = EditText(this).apply {
+            setSingleLine(); hint = "channel name"; setText(repo.searchQ); setSelectAllOnFocus(true); textSize = 26f
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH; setTextColor(Neon.TEXT); setHintTextColor(Neon.MUTED)
+            setPadding(dp(24), dp(16), dp(24), dp(16))
+            background = GradientDrawable().apply { setColor(Color.parseColor("#0F1A42")); cornerRadius = dp(18).toFloat(); setStroke(dp(2), Neon.YELLOW) }
         }
-        val dlg = android.app.AlertDialog.Builder(this).setTitle("Search channels").setView(et)
-            .setPositiveButton("Search") { _, _ -> doSearch(et.text.toString()) }
-            .setNegativeButton("Cancel", null).create()
+        val go = NeonRow(this, "Search", "Find channels across all groups").apply { setOnClickListener { dlg.dismiss(); doSearch(et.text.toString()) } }
+        val cancel = NeonRow(this, "Cancel", "Back to the list").apply { setOnClickListener { dlg.dismiss(); resetHide() } }
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, 0, 0, dp(16)) }
+        head.addView(OrbView(this).apply { energy = 0.2f }, LinearLayout.LayoutParams(dp(56), dp(56)))
+        head.addView(TextView(this).apply { text = "Search channels"; setTextColor(Neon.TEXT); textSize = 30f; typeface = Typeface.create("sans-serif-light", Typeface.NORMAL); setPadding(dp(14), 0, 0, 0) })
+        col.addView(head); col.addView(et, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(18) })
+        col.addView(go, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) }); col.addView(cancel, LinearLayout.LayoutParams(-1, -2))
+        val frame = FrameLayout(this).apply { background = Neon.Backdrop(); addView(col, FrameLayout.LayoutParams(dp(640), -2, Gravity.CENTER)) }
+        dlg.setContentView(frame)
         et.setOnEditorActionListener { _, _, _ -> dlg.dismiss(); doSearch(et.text.toString()); true }
         dlg.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+        dlg.setOnCancelListener { resetHide() }
         dlg.show(); hideJob?.cancel()
     }
 
@@ -1049,7 +1065,7 @@ class MainActivity : Activity() {
         val label: (T) -> String, val sub: (T) -> String,
         val onClick: (Int) -> Unit, val onLong: ((Int) -> Boolean)?, val onFocus: ((Int) -> Unit)?,
         val icon: ((T) -> String)? = null, val tag: ((T) -> Pair<String, Int>?)? = null,
-        val fav: ((T) -> Boolean)? = null
+        val fav: ((T) -> Boolean)? = null, val glyph: ((T) -> String?)? = null
     ) : RecyclerView.Adapter<RowAdapter<T>.VH>() {
         var items: MutableList<T> = ArrayList()
         var activeIdx = -1
@@ -1104,6 +1120,7 @@ class MainActivity : Activity() {
             val tg = tag?.invoke(it); h.tagView.text = tg?.first ?: ""; if (tg != null) h.tagView.setTextColor(tg.second)
             val url = icon?.invoke(it)
             if (h.logo != null) { h.logo.alpha = if (url.isNullOrEmpty()) 0.25f else 1f; if (!url.isNullOrEmpty()) h.logo.load(url) { size(108, 80); crossfade(false) } else { h.logo.dispose(); h.logo.setImageDrawable(null) } }
+            h.name.setCompoundDrawablesRelativeWithIntrinsicBounds(glyph?.invoke(it)?.let { g -> GlyphDrawable(g, dp(22)) }, null, null, null); h.name.compoundDrawablePadding = dp(12)
             h.name.setTypeface(null, if (i == activeIdx || i == movingIdx) Typeface.BOLD else Typeface.NORMAL)
             h.itemView.setBackgroundColor(Color.TRANSPARENT)
             h.itemView.background = if (i == movingIdx) GradientDrawable().apply { setColor(Color.parseColor("#F2994A")); cornerRadius = dp(8).toFloat() } else rowBg()
@@ -1111,4 +1128,24 @@ class MainActivity : Activity() {
 
         override fun getItemCount() = items.size
     }
+}
+
+/** Small drawn icons for the pseudo regions (system emoji ignored our colours and looked out of place). */
+class GlyphDrawable(private val kind: String, private val size: Int) : android.graphics.drawable.Drawable() {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; color = Neon.CYAN }
+    override fun getIntrinsicWidth() = size
+    override fun getIntrinsicHeight() = size
+    override fun draw(c: Canvas) {
+        val s = size.toFloat(); p.strokeWidth = s * 0.11f
+        if (kind == "live") {
+            p.style = Paint.Style.STROKE; c.drawCircle(s / 2, s / 2, s * 0.40f, p)
+            p.style = Paint.Style.FILL; c.drawCircle(s / 2, s / 2, s * 0.17f, p)
+        } else {
+            p.style = Paint.Style.STROKE; c.drawCircle(s * 0.42f, s * 0.42f, s * 0.28f, p)
+            c.drawLine(s * 0.63f, s * 0.63f, s * 0.90f, s * 0.90f, p)
+        }
+    }
+    override fun setAlpha(a: Int) { p.alpha = a }
+    override fun setColorFilter(f: ColorFilter?) { p.colorFilter = f }
+    @Deprecated("", ReplaceWith("PixelFormat.TRANSLUCENT")) override fun getOpacity() = PixelFormat.TRANSLUCENT
 }
