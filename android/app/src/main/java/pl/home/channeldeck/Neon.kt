@@ -38,7 +38,7 @@ object Neon {
     fun plain(s: String): String {
         val m = mapOf('ᴴ' to 'H', 'ᴰ' to 'D', 'ᴿ' to 'R', 'ᴬ' to 'A', 'ᵂ' to 'W', 'ᵁ' to 'U', 'ⱽ' to 'V', 'ᴵ' to 'I', 'ᴾ' to 'P', 'ᴸ' to 'L', 'ᴮ' to 'B', 'ᴼ' to 'O', 'ʸ' to 'y', 'ᵀ' to 'T',
             'ʰ' to 'h', 'ᵉ' to 'e', 'ᵛ' to 'v', 'ᶜ' to 'c', 'ˢ' to 's', '⁰' to '0', '¹' to '1', '²' to '2', '³' to '3', '⁴' to '4', '⁵' to '5', '⁶' to '6', '⁷' to '7', '⁸' to '8', '⁹' to '9')
-        return s.map { m[it] ?: it }.joinToString("").replace(Regex("^[A-Za-z]{2,3}\\s*\\|\\s*"), "").trim()
+        return s.map { m[it] ?: it }.joinToString("").replace(Regex("^[A-Za-z]{2,3}\\s*\\|\\s*"), "").replace(Regex("^#{2,}\\s*|\\s*#{2,}$"), "").trim()
     }
 
     /** Dark gradient + two static soft glows, built once. Cheap, and gives the flat navy some depth. */
@@ -164,7 +164,7 @@ class SplashView(ctx: Context) : FrameLayout(ctx) {
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         postDelayed(slow, 8000)
-        pulse = ValueAnimator.ofFloat(0.55f, 1f).apply { duration = 1500; repeatCount = ValueAnimator.INFINITE; repeatMode = ValueAnimator.REVERSE
+        pulse = ValueAnimator.ofFloat(0.8f, 1f).apply { duration = 1500; repeatCount = ValueAnimator.INFINITE; repeatMode = ValueAnimator.REVERSE
             addUpdateListener { status.alpha = it.animatedValue as Float }; start() }
     }
     override fun onDetachedFromWindow() { removeCallbacks(slow); pulse?.cancel(); super.onDetachedFromWindow() }

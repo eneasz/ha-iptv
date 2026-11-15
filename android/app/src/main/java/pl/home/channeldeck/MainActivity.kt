@@ -171,7 +171,7 @@ class MainActivity : Activity() {
         fun rr(c: Int, stroke: Int, w: Float) = GradientDrawable().apply { setColor(c); cornerRadius = dp(14).toFloat(); setStroke((w * resources.displayMetrics.density).toInt(), stroke) }
         return StateListDrawable().apply {
             addState(intArrayOf(android.R.attr.state_focused), rr(Color.parseColor("#172863"), Neon.YELLOW, 2.5f))
-            addState(intArrayOf(android.R.attr.state_selected), rr(Neon.withAlpha(Neon.BLUE, 60), Neon.withAlpha(Neon.BLUE, 150), 1.2f))
+            addState(intArrayOf(android.R.attr.state_selected), rr(Color.parseColor("#142053"), Neon.withAlpha(Neon.CYAN, 170), 1.5f))
             addState(intArrayOf(), ColorDrawable(Color.TRANSPARENT))
         }
     }
@@ -207,7 +207,7 @@ class MainActivity : Activity() {
         val cols = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         regionAdapter = RowAdapter(
             label = { it.name.removePrefix("● ").removePrefix("🔍 ") }, glyph = { when (it.id) { Repo.LIVE -> "live"; Repo.SEARCH -> "find"; else -> null } },
-            sub = { if (it.id == Repo.SEARCH) (if (repo.searchRes.isEmpty()) "" else repo.searchRes.size.toString()) else if (it.id == Repo.LIVE) it.channels.toString() else it.groups.toString() },
+            sub = { if (it.id == Repo.SEARCH) (if (repo.searchRes.isEmpty()) "" else repo.searchRes.size.toString()) else if (it.id == Repo.LIVE || it.id == Repo.FAV) it.channels.toString() else it.groups.toString() },
             onClick = { onRegionClick(it) }, onLong = { startMove(it, true) }, onFocus = { onRegionFocus(it) })
         regionRv = rv(regionAdapter)
         groupAdapter = RowAdapter(
@@ -219,24 +219,25 @@ class MainActivity : Activity() {
             icon = { it.icon }, tag = { offTag(it) ?: Quality.rowTag(it.name, prefs.measured(it.id)) })
         groupRv = rv(groupAdapter)
         chanRv = rv(chanAdapter)
-        cols.addView(titled("REGIONS", regionRv), LinearLayout.LayoutParams(0, -1, 0.23f))
+        cols.addView(titled("REGIONS", regionRv), LinearLayout.LayoutParams(0, -1, 0.20f))
         cols.addView(View(this).apply { setBackgroundColor(Neon.withAlpha(Neon.BLUE, 70)) }, LinearLayout.LayoutParams(dp(1), -1))
-        cols.addView(titled("GROUPS", groupRv), LinearLayout.LayoutParams(0, -1, 0.29f))
+        cols.addView(titled("GROUPS", groupRv), LinearLayout.LayoutParams(0, -1, 0.33f))
         cols.addView(View(this).apply { setBackgroundColor(Neon.withAlpha(Neon.BLUE, 70)) }, LinearLayout.LayoutParams(dp(1), -1))
-        cols.addView(titled("CHANNELS", chanRv), LinearLayout.LayoutParams(0, -1, 0.48f))
-        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(24), dp(12), dp(24), 0) }
+        cols.addView(titled("CHANNELS", chanRv), LinearLayout.LayoutParams(0, -1, 0.47f))
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(4), 0, 0) }
         head.addView(OrbView(this).apply { energy = 0.2f }, LinearLayout.LayoutParams(dp(48), dp(48)))
         head.addView(TextView(this).apply { text = "Live TV"; setTextColor(Neon.TEXT); textSize = 26f; typeface = Typeface.create("sans-serif-light", Typeface.NORMAL); setPadding(dp(14), 0, 0, 0) })
         overlay.addView(head, LinearLayout.LayoutParams(-1, -2))
         overlay.addView(cols, LinearLayout.LayoutParams(-1, 0, 1f))
         detailPanel = InfoPanel(this)
-        overlay.addView(detailPanel, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(12), dp(6), dp(12), dp(6)) })
+        overlay.addView(detailPanel, LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(6), 0, dp(6)) })
         hint = TextView(this).apply {
             setTextColor(Neon.MUTED); textSize = 15f
-            setPadding(dp(24), dp(10), dp(24), dp(14))
+            setPadding(0, dp(8), 0, dp(6))
         }
         overlay.addView(hint, LinearLayout.LayoutParams(-1, -2))
-        root.addView(overlay, FrameLayout.LayoutParams((resources.displayMetrics.widthPixels * 0.95f).toInt(), -1, Gravity.START))
+        overlay.setPadding(dp(48), dp(16), dp(48), dp(8))
+        root.addView(overlay, FrameLayout.LayoutParams(-1, -1))
         setHint()
         home = HomeView(this, onLive = { openLive() }, onResume = { resumeFromHome() },
             onSoon = { flashBanner("$it isn't available yet – HA IPTV does Live TV for now") }, onSettings = { openSettings() }).apply { visibility = View.GONE }
@@ -257,12 +258,13 @@ class MainActivity : Activity() {
     private fun rv(a: RecyclerView.Adapter<*>) = RecyclerView(this).apply {
         layoutManager = LinearLayoutManager(context); adapter = a; itemAnimator = null
         setPadding(dp(8), 0, dp(8), dp(8)); clipToPadding = false
+        overScrollMode = View.OVER_SCROLL_NEVER
         isFocusable = false; descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
     }
 
     private fun setHint(moving: Boolean = false) {
         hint.text = if (moving) "MOVING GROUP   ▲▼ move   ◀ top   ▶ bottom   OK save   BACK cancel"
-        else "OK open · hold OK = move group · ★ favourite channel · MENU reload · FF/REW page · PLAY = check group live · BACK close"
+        else "OK open  ·  hold OK: favourite / move  ·  PLAY: check live  ·  BACK close"
     }
 
     // ---------------------------------------------------------------- setup (first run)
@@ -646,16 +648,18 @@ class MainActivity : Activity() {
             setSingleLine(); hint = "channel name"; setText(repo.searchQ); setSelectAllOnFocus(true); textSize = 26f
             imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH; setTextColor(Neon.TEXT); setHintTextColor(Neon.MUTED)
             setPadding(dp(24), dp(16), dp(24), dp(16))
-            background = GradientDrawable().apply { setColor(Color.parseColor("#0F1A42")); cornerRadius = dp(18).toFloat(); setStroke(dp(2), Neon.YELLOW) }
+            fun frame(f: Boolean) = GradientDrawable().apply { setColor(Color.parseColor(if (f) "#172863" else "#0F1A42")); cornerRadius = dp(18).toFloat(); if (f) setStroke(dp(3), Neon.YELLOW) else setStroke(dp(1), Neon.withAlpha(Neon.BLUE, 130)) }
+            background = frame(false)
+            setOnFocusChangeListener { _, f -> background = frame(f) }
         }
         val go = NeonRow(this, "Search", "Find channels across all groups").apply { setOnClickListener { dlg.dismiss(); doSearch(et.text.toString()) } }
-        val cancel = NeonRow(this, "Cancel", "Back to the list").apply { setOnClickListener { dlg.dismiss(); resetHide() } }
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, 0, 0, dp(16)) }
         head.addView(OrbView(this).apply { energy = 0.2f }, LinearLayout.LayoutParams(dp(56), dp(56)))
         head.addView(TextView(this).apply { text = "Search channels"; setTextColor(Neon.TEXT); textSize = 30f; typeface = Typeface.create("sans-serif-light", Typeface.NORMAL); setPadding(dp(14), 0, 0, 0) })
         col.addView(head); col.addView(et, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(18) })
-        col.addView(go, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) }); col.addView(cancel, LinearLayout.LayoutParams(-1, -2))
+        col.addView(go, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
+        col.addView(TextView(this).apply { text = "BACK  to cancel"; setTextColor(Neon.MUTED); textSize = 15f; setPadding(0, dp(8), 0, 0) })
         val frame = FrameLayout(this).apply { background = Neon.Backdrop(); addView(col, FrameLayout.LayoutParams(dp(640), -2, Gravity.CENTER)) }
         dlg.setContentView(frame)
         et.setOnEditorActionListener { _, _, _ -> dlg.dismiss(); doSearch(et.text.toString()); true }
@@ -1116,10 +1120,10 @@ class MainActivity : Activity() {
             val it = items[i]
             h.name.text = (if (i == movingIdx) "⇅  " else "") + Neon.plain(label(it)); h.count.text = sub(it)
             h.itemView.isSelected = i == activeIdx
-            h.star.visibility = if (fav?.invoke(it) == true) View.VISIBLE else View.GONE
-            val tg = tag?.invoke(it); h.tagView.text = tg?.first ?: ""; if (tg != null) h.tagView.setTextColor(tg.second)
+            h.star.visibility = if (fav?.invoke(it) == true) View.VISIBLE else if (fav != null) View.INVISIBLE else View.GONE
+            val tg = tag?.invoke(it); h.tagView.text = tg?.first ?: ""; h.tagView.visibility = if (tg == null) View.GONE else View.VISIBLE; if (tg != null) h.tagView.setTextColor(tg.second)
             val url = icon?.invoke(it)
-            if (h.logo != null) { h.logo.alpha = if (url.isNullOrEmpty()) 0.25f else 1f; if (!url.isNullOrEmpty()) h.logo.load(url) { size(108, 80); crossfade(false) } else { h.logo.dispose(); h.logo.setImageDrawable(null) } }
+            if (h.logo != null) { h.logo.alpha = 1f; h.logo.background = GradientDrawable().apply { setColor(if (url.isNullOrEmpty()) Color.parseColor("#1B2650") else Neon.withAlpha(Color.WHITE, 235)); cornerRadius = dp(8).toFloat() }; if (!url.isNullOrEmpty()) h.logo.load(url) { size(108, 80); crossfade(false); listener(onError = { _, _ -> h.logo.background = GradientDrawable().apply { setColor(Color.parseColor("#1B2650")); cornerRadius = dp(8).toFloat() }; h.logo.setImageDrawable(InitialsDrawable(Neon.plain(label(it)).removePrefix("PL: ").take(2).uppercase(), dp(40))) }) } else { h.logo.dispose(); h.logo.setImageDrawable(InitialsDrawable(Neon.plain(label(it)).removePrefix("PL: ").take(2).uppercase(), dp(40))) } }
             h.name.setCompoundDrawablesRelativeWithIntrinsicBounds(glyph?.invoke(it)?.let { g -> GlyphDrawable(g, dp(22)) }, null, null, null); h.name.compoundDrawablePadding = dp(12)
             h.name.setTypeface(null, if (i == activeIdx || i == movingIdx) Typeface.BOLD else Typeface.NORMAL)
             h.itemView.setBackgroundColor(Color.TRANSPARENT)
@@ -1147,5 +1151,14 @@ class GlyphDrawable(private val kind: String, private val size: Int) : android.g
     }
     override fun setAlpha(a: Int) { p.alpha = a }
     override fun setColorFilter(f: ColorFilter?) { p.colorFilter = f }
+    @Deprecated("", ReplaceWith("PixelFormat.TRANSLUCENT")) override fun getOpacity() = PixelFormat.TRANSLUCENT
+}
+
+/** Empty-logo placeholder: the channel's first two letters on a dark tile. */
+class InitialsDrawable(private val text: String, private val h: Int) : android.graphics.drawable.Drawable() {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Neon.MUTED; textAlign = Paint.Align.CENTER; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL) }
+    override fun draw(c: Canvas) { p.textSize = bounds.height() * 0.5f; c.drawText(text, bounds.exactCenterX(), bounds.exactCenterY() + p.textSize * 0.35f, p) }
+    override fun setAlpha(a: Int) { p.alpha = a }
+    override fun setColorFilter(f: ColorFilter?) {}
     @Deprecated("", ReplaceWith("PixelFormat.TRANSLUCENT")) override fun getOpacity() = PixelFormat.TRANSLUCENT
 }
