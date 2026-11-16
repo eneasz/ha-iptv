@@ -3,7 +3,12 @@
   "name": "HA IPTV",
   "after_dependencies": [
     "androidtv",
+    "frontend",
+    "panel_custom",
     "media_player"
+  ],
+  "dependencies": [
+    "http"
   ],
   "codeowners": [
     "@eneasz"

@@ -13,6 +13,7 @@ from .coordinator import HaIptvCoordinator
 from .scheduler import Scheduler
 from .services import async_register_services
 from .sync import SyncHub
+from .web import async_register_views
 
 PLATFORMS = [Platform.MEDIA_PLAYER, Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SELECT, Platform.BUTTON, Platform.CALENDAR]
 
@@ -36,6 +37,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaIptvConfigEntry) -> bo
     await coord.scheduler.async_load()
     domain_data[entry.entry_id] = coord
     async_register_services(hass)
+    await async_register_views(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_reload))
     coord.start_push()
