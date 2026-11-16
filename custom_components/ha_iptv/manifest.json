@@ -7,19 +7,19 @@
     "panel_custom",
     "media_player"
   ],
-  "dependencies": [
-    "http"
-  ],
   "codeowners": [
     "@eneasz"
   ],
   "config_flow": true,
+  "dependencies": [
+    "http"
+  ],
   "documentation": "https://github.com/eneasz/ha-iptv",
   "integration_type": "device",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/eneasz/ha-iptv/issues",
   "requirements": [],
-  "version": "0.6.1",
+  "version": "0.6.2",
   "zeroconf": [
     "_haiptv._tcp.local."
   ]

@@ -1,6 +1,6 @@
 /* HA IPTV full-screen player panel (/iptv-player). Plays live channels through the ha_iptv proxy views. */
 const API = "/api/ha_iptv";
-const RECENT = "__recent", FAV = "__fav", SEARCH = "__search";
+const RECENT = "__recent", FAV = "__fav";  // FAV is the stick's own Favourites group (shared with the TV app)
 const LS = "ha_iptv_player";
 const css = `
 :host{display:block;height:100%;background:#000;color:#eef2ff;font-family:Roboto,system-ui,sans-serif;--glass:rgba(12,18,48,.78);--ring:#f4ff00;--blue:#2a6bff}
@@ -109,8 +109,9 @@ class HaIptvPlayer extends HTMLElement {
     try {
       await this.loadHls();
       const d = await this.json("/groups");
-      this.groups = (d.groups || []).slice().sort((a, b) => a.name.localeCompare(b.name));
-      this.groups.unshift({ id: FAV, name: "♥ Favourites", count: (this.saved.favs || []).length }, { id: RECENT, name: "★ Recent", count: (this.saved.recent || []).length });
+      // same order as on the stick; its Favourites group is used as is, "Recent" is local to this browser
+      this.groups = (d.groups || []).filter((g) => g.id !== "__search");
+      this.groups.unshift({ id: RECENT, name: "★ Recent", count: (this.saved.recent || []).length });
     } catch (e) { this.setState("error", "Can't reach the HA IPTV integration (" + e.message + ")."); return; }
     this.renderGroups(); this.renderChannels();
     const s = this.saved;
@@ -120,7 +121,7 @@ class HaIptvPlayer extends HTMLElement {
       if (c) { this.play(c); return; }
     }
     // nothing to resume: open the menu with a group already loaded so the screen is never half-empty
-    const first = (this.saved.favs || []).length ? FAV : (this.saved.recent || []).length ? RECENT : (this.groups[2] || this.groups[0] || {}).id;
+    const first = (this.saved.recent || []).length ? RECENT : (this.groups[1] || this.groups[0] || {}).id;
     if (first != null) { this.group = first; await this.loadChannels(first); this.renderGroups(); }
     this.setState(null); this.openMenu();
   }
@@ -178,9 +179,8 @@ class HaIptvPlayer extends HTMLElement {
   // ---------------------------------------------------------------- menu
   async loadChannels(gid) {
     this.$("chans").innerHTML = '<div class="empty">Loading…</div>';
-    if (gid === FAV) { this.chans = (this.saved.favs || []).slice(); this.renderChannels(); return; }
     if (gid === RECENT) { this.chans = (this.saved.recent || []).slice(); this.renderChannels(); return; }
-    try { this.chans = await this.json("/channels/" + encodeURIComponent(gid)); } catch (e) { this.chans = []; this.$("chans").innerHTML = '<div class="empty">Could not load channels.</div>'; return; }
+    try { this.chans = await this.json("/channels/" + encodeURIComponent(gid)); this.noteFavs(this.chans); } catch (e) { this.chans = []; this.$("chans").innerHTML = '<div class="empty">Could not load channels.</div>'; return; }
     this.renderChannels();
   }
   row(html, cls, fn) { const b = document.createElement("button"); b.className = "row " + (cls || ""); b.innerHTML = html; b.onclick = fn; return b; }
@@ -191,28 +191,33 @@ class HaIptvPlayer extends HTMLElement {
     if (!list.length) box.innerHTML = `<div class="empty">${q ? "No group matches." : "No channel groups loaded. Check that a stick is online and a region is selected in the app."}</div>`;
     list.forEach((g) => box.append(this.row(`<span class="t">${this.esc(g.name)}</span><span class="k">${g.count}</span>`, g.id == this.group ? "sel" : "", async () => { this.group = g.id; this.renderGroups(); await this.loadChannels(g.id); this.focusCol("c"); })));
   }
-  isFav(c) { return (this.saved.favs || []).some((x) => x.id == c.id); }
-  toggleFav(c) {
-    const f = this.saved.favs || [];
-    const favs = this.isFav(c) ? f.filter((x) => x.id != c.id) : [{ id: c.id, name: c.name, num: c.num, icon: c.icon }, ...f];
-    this.saved = { ...this.saved, favs }; try { localStorage.setItem(LS, JSON.stringify(this.saved)); } catch (e) {}
-    const g = this.groups.find((x) => x.id === FAV); if (g) g.count = favs.length;
-    this.toast(this.isFav(c) ? "Added to Favourites" : "Removed from Favourites", c.name);
-    if (this.group === FAV) this.chans = favs.slice();
-    this.renderGroups();
+  favIds = new Set();
+  noteFavs(list) { (list || []).forEach((c) => { if (typeof c.fav === "boolean") c.fav ? this.favIds.add(String(c.id)) : this.favIds.delete(String(c.id)); }); }
+  isFav(c) { return this.favIds.has(String(c.id)); }
+  async toggleFav(c) {
+    const on = !this.isFav(c);
+    try {
+      const r = await fetch(API + "/fav", { method: "POST", headers: { Authorization: "Bearer " + (await this.token()), "Content-Type": "application/json" }, body: JSON.stringify({ id: String(c.id), on }) });
+      if (!r.ok) throw new Error(r.status);
+    } catch (e) { return this.toast("Couldn't change favourites", "Open the HA IPTV app on a stick and try again"); }
+    on ? this.favIds.add(String(c.id)) : this.favIds.delete(String(c.id));
+    const g = this.groups.find((x) => x.id === FAV); if (g) g.count += on ? 1 : -1;
+    this.toast(on ? "Added to Favourites" : "Removed from Favourites", c.name);
+    if (this.group === FAV && !on) this.chans = this.chans.filter((x) => x.id != c.id);
+    this.renderGroups(); if (this.menuOn) this.renderChannels();
   }
   async doSearch() {
     const q = this.$("cq").value.trim();
     if (q.length < 2) { if (this.group != null) await this.loadChannels(this.group); else { this.chans = []; this.renderChannels(); } return; }
     const my = (this.sq = (this.sq || 0) + 1);
-    try { const r = await this.json("/search?q=" + encodeURIComponent(q)); if (my !== this.sq) return; this.chans = r; this.searching = true; this.renderChannels(); } catch (e) { if (my === this.sq) this.$("chans").innerHTML = '<div class="empty">Search failed.</div>'; }
+    try { const r = await this.json("/search?q=" + encodeURIComponent(q)); if (my !== this.sq) return; this.noteFavs(r); this.chans = r; this.searching = true; this.renderChannels(); } catch (e) { if (my === this.sq) this.$("chans").innerHTML = '<div class="empty">Search failed.</div>'; }
   }
   renderChannels() {
     const box = this.$("chans"); box.innerHTML = ""; this.$("ch").textContent = this.$("cq").value.trim().length >= 2 ? "Search results" : (this.groupName() || "Channels");
-    if (!this.chans.length) box.innerHTML = '<div class="empty">Select a group on the left to see its channels.</div>';
+    if (!this.chans.length) box.innerHTML = `<div class="empty">${this.group == null ? "Select a group on the left to see its channels." : this.group === RECENT ? "Channels you watch will show up here." : this.group === FAV ? "No favourites yet. Press H or the heart on a channel to add one." : "No channels."}</div>`;
     this.chans.forEach((c) => {
       const b = this.row(`${c.icon ? `<img loading="lazy" src="${this.esc(c.icon)}" alt="">` : ""}<span class="n">${this.esc(c.num)}</span><span class="t">${this.esc(c.name)}</span><span class="fav ${this.isFav(c) ? "on" : ""}" role="button" aria-label="Toggle favourite" title="Favourite (H)">${this.isFav(c) ? "♥" : "♡"}</span>`, this.cur && this.cur.id == c.id ? "sel" : "", () => { this.closeMenu(); this.play(c); });
-      b.querySelector(".fav").onclick = (e) => { e.stopPropagation(); this.toggleFav(c); this.renderChannels(); };
+      b.querySelector(".fav").onclick = (e) => { e.stopPropagation(); this.toggleFav(c); };
       box.append(b);
     });
   }
@@ -236,7 +241,7 @@ class HaIptvPlayer extends HTMLElement {
       case "fav": {
         const a = this.shadowRoot.activeElement, rows = [...this.$("chans").querySelectorAll(".row")];
         const c = this.menuOn && a && rows.includes(a) ? this.chans[rows.indexOf(a)] : this.cur;
-        if (c) { this.toggleFav(c); if (this.menuOn) this.renderChannels(); }
+        if (c) this.toggleFav(c);
         return;
       }
       case "mute": v.muted = !v.muted; return this.toast(v.muted ? "Muted" : "Sound on");

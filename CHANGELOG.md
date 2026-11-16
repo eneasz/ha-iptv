@@ -1,4 +1,9 @@
 # Changelog
+## 0.6.2
+- Player: groups are in the same order as on the stick (no more alphabetical sort).
+- Player: there is one **Favourites** group now, the stick's own, with its channels. The heart (or H) adds and removes favourites on the stick, so they are shared with the TV app. This needs the app running on a stick.
+- Clearer empty-list messages for Favourites and Recent.
+- Fixed the manifest key order that made the hassfest check fail, and Validate no longer runs twice on a release tag.
 ## 0.6.1
 - **Player works while no stick runs the app.** Home Assistant now remembers the last channel catalogue (groups, channels you opened) and the provider login, so the IPTV panel no longer shows an empty list when the TV is on another app. Open the HA IPTV app on a stick once so HA can learn the catalogue.
 - **Search all channels** from the channel menu (2+ letters), **Favourites** (heart on a channel, or H) and a **Recent** group. The menu opens with a group already loaded.

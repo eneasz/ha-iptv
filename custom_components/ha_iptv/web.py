@@ -253,6 +253,34 @@ class ChannelsView(HomeAssistantView):
         return self.json(chans)
 
 
+class FavView(HomeAssistantView):
+    """Toggle a favourite on the stick (favourites are shared with the TV app)."""
+
+    url = "/api/ha_iptv/fav"
+    name = "api:ha_iptv:fav"
+    requires_auth = True
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self._hass = hass
+
+    async def post(self, request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            cid, on = str(body["id"]), bool(body["on"])
+        except Exception:
+            return self.json_message("bad request", 400)
+        if not CHANNEL_ID.match(cid):
+            return self.json_message("bad channel id", 400)
+        sticks = [c for c in self._hass.data.get(DOMAIN, {}).values() if hasattr(c, "api") and hasattr(c, "groups")]
+        for c in sorted(sticks, key=lambda x: not getattr(x, "connected", False)):
+            try:
+                await c.api.command(cmd="favourite", channel_id=cid, on=on)
+                return self.json({"ok": True, "fav": on})
+            except Exception:  # app not running on this stick
+                continue
+        return self.json_message("no stick is running the app", 503)
+
+
 class SearchView(HomeAssistantView):
     url = "/api/ha_iptv/search"
     name = "api:ha_iptv:search"
@@ -316,6 +344,7 @@ async def async_register_views(hass: HomeAssistant) -> None:
     hass.http.register_view(GroupsView(hass, cache))
     hass.http.register_view(ChannelsView(hass, cache))
     hass.http.register_view(SearchView(hass))
+    hass.http.register_view(FavView(hass))
     try:
         await _async_register_panel(hass)
     except Exception:  # never let the player panel stop the integration from loading

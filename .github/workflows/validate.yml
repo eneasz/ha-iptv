@@ -1,5 +1,9 @@
 name: Validate
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches: [main]   # tag pushes are covered by the Release workflow, so they no longer run Validate twice
+  pull_request:
+  workflow_dispatch:
 jobs:
   hacs:
     runs-on: ubuntu-latest
