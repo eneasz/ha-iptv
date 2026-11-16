@@ -30,8 +30,15 @@ jobs:
         run: |
           # Same signing key every release, or the TV cannot update in place. See README "Self-update".
           if [ -n "$IPTV_KEYSTORE_B64" ]; then
-            echo "$IPTV_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/iptv.keystore"
-            export IPTV_KEYSTORE="$RUNNER_TEMP/iptv.keystore"
+            ks="$RUNNER_TEMP/iptv.keystore"
+            if ! printf '%s' "$IPTV_KEYSTORE_B64" | tr -d ' \r\n' | base64 -d > "$ks" 2>/dev/null; then
+              echo "::error::IPTV_KEYSTORE_B64 is not valid base64. Paste the single-line output of: base64 -w0 ~/.android/debug.keystore"; exit 1
+            fi
+            if ! keytool -list -keystore "$ks" -storepass android -alias androiddebugkey > "$RUNNER_TEMP/kt.txt" 2>&1; then
+              echo "::error::keystore unreadable, or alias androiddebugkey / password android do not match: $(head -c 200 "$RUNNER_TEMP/kt.txt" | tr '\n' ' ')"; exit 1
+            fi
+            echo "::notice::signing key $(grep -i 'SHA-256' "$RUNNER_TEMP/kt.txt")"
+            export IPTV_KEYSTORE="$ks"
           else
             echo "::warning::IPTV_KEYSTORE_B64 secret missing: this APK is signed with a throw-away key and cannot update an installed app"
           fi
