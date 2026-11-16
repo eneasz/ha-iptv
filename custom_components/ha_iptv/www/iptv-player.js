@@ -46,7 +46,7 @@ button:focus-visible,.row:focus-visible,input:focus-visible{outline:3px solid va
 .row .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row .k{opacity:.6;font-size:15px}
 .empty{opacity:.7;padding:24px 16px;font-size:17px}
-.hint{opacity:.7;font-size:14px;padding:10px 4px 0}
+.hint{color:#c4cce4;font-size:14px;padding:10px 4px 0}
 @media (max-width:760px){.menu{flex-direction:column;padding:16px}.col.g{flex:0 0 38%}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 `;

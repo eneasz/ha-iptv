@@ -356,7 +356,7 @@ class HomeView(ctx: Context, val onLive: () -> Unit, val onResume: () -> Unit, v
     val live = TileView(ctx, "live", "Live TV", "…")
     val movies = TileView(ctx, "movies", "Movies", "Films on demand")
     val series = TileView(ctx, "series", "Series", "Shows on demand")
-    val settings = TileView(ctx, "settings", "Settings", "Format · API · About")
+    val settings = TileView(ctx, "settings", "Settings", "Format · API · Updates")
     val resume = NeonRow(ctx, "Resume", "", big = true)
     val other = NeonRow(ctx, "Continue", "", big = true)        // what another stick was playing
     private val tick = object : Runnable { override fun run() { updateClock(); postDelayed(this, 20_000) } }

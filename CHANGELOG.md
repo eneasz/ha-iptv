@@ -1,4 +1,9 @@
 # Changelog
+## 0.6.0
+- **Browser player.** New **IPTV** panel in the Home Assistant sidebar (`/iptv-player`): full-screen live TV in any desktop browser, resumes your last channel, channel menu (groups and channels), keyboard control (arrows, Enter, Space, M, F, G, Backspace) and a transparent on-screen remote that appears when the mouse is near the bottom-right corner (click the corner button to pin it). Press F or double-click for full screen.
+- **Launcher card** `custom:ha-iptv-card`: muted live preview of the last channel and a Watch button that opens the player.
+- Streams go through Home Assistant (login required, works over HTTPS); your provider URL and credentials never reach the browser. The player needs at least one stick online to read the provider login.
+- App 0.9.5: removed the About entry from Settings (the version is shown under Software update).
 ## 0.5.4
 - App 0.9.4: **BACK on Home now asks "Exit HA IPTV?"** (Exit / Stay, Stay is focused, a second BACK dismisses it), so a stray press no longer drops you to the Fire TV launcher. The dialog uses the app's own look.
 - Update check: runs 10 s after start (was 25 s) and at most every 30 minutes (was 6 hours). If the update was found while a channel was playing, you are asked as soon as you go back to Home.

@@ -955,9 +955,6 @@ class MainActivity : Activity() {
         val haRow = NeonRow(this, "Home Assistant", haText())
         val pair = NeonRow(this, "Allow pairing again", "OK to let a Home Assistant pair with this TV for 5 minutes")
         pair.setOnClickListener { prefs.pairOpenUntil = System.currentTimeMillis() + 300_000; pair.set("Open for 5 minutes – now click Configure in Home Assistant") }
-        val build = try { @Suppress("DEPRECATION") packageManager.getPackageInfo(packageName, 0).versionCode } catch (e: Exception) { 0 }
-        val about = NeonRow(this, "About", "HA IPTV version ${updater.installed} (build $build)  ·  a player only. It provides no channels, playlists or content – you bring your own subscription.")
-        about.valueTv.setSingleLine(false)
         val upd = NeonRow(this, "Software update", "Version ${updater.installed}  ·  OK to check for a new version")
         upd.valueTv.setSingleLine(false)
         upd.setOnClickListener {
@@ -974,7 +971,7 @@ class MainActivity : Activity() {
             }
         }
         updater.available?.let { upd.set("Version ${it.version} is available  ·  OK to download and install") }
-        val panel = SettingsPanel(this, listOf(fmt, refresh, name, yieldRow, haRow, pair, upd, api, about)) { }
+        val panel = SettingsPanel(this, listOf(fmt, refresh, name, yieldRow, haRow, pair, upd, api)) { }
         settingsPanel = panel; root.addView(panel, FrameLayout.LayoutParams(-1, -1)); banner.bringToFront()
     }
     private fun closeSettings() { settingsPanel?.let { root.removeView(it) }; settingsPanel = null; home.settings.requestFocus() }
