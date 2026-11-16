@@ -1,4 +1,7 @@
 # Changelog
+## 0.5.2
+- App 0.9.2: denser Live TV menu. Smaller row text (18 sp), tighter rows and smaller channel logos show about 9–10 groups and 7–8 channels at once (before: 7 and 5). The channels column is wider (regions 16 %, groups 33 %, channels 51 %), so long channel names truncate less.
+- First release signed with the fixed key, so a TV can update itself from it (0.5.1 was built before the signing secret worked; sticks on 0.9.1 from a local build update to 0.9.2 normally).
 ## 0.5.1
 - App 0.9.1: **updates itself from the TV.** Shortly after start the app looks for a newer release on GitHub (at most every 6 hours). On the Home screen it offers "Install now / Later"; while a channel is playing it only shows a short banner. Settings has a "Software update" row to check and install by hand. The first time, Android asks you to allow "Install unknown apps" for HA IPTV and to confirm the install; after that it is one OK press.
 - App 0.9.1: the Live TV menu (regions, groups, channels) no longer shows the now-playing / programme bar at the bottom, so the lists have the full height.

@@ -296,11 +296,11 @@ class MainActivity : Activity() {
             icon = { it.icon }, tag = { offTag(it) ?: Quality.rowTag(it.name, prefs.measured(it.id)) })
         groupRv = rv(groupAdapter)
         chanRv = rv(chanAdapter)
-        cols.addView(titled("REGIONS", regionRv), LinearLayout.LayoutParams(0, -1, 0.20f))
+        cols.addView(titled("REGIONS", regionRv), LinearLayout.LayoutParams(0, -1, 0.16f))
         cols.addView(View(this).apply { setBackgroundColor(Neon.withAlpha(Neon.BLUE, 70)) }, LinearLayout.LayoutParams(dp(1), -1))
         cols.addView(titled("GROUPS", groupRv), LinearLayout.LayoutParams(0, -1, 0.33f))
         cols.addView(View(this).apply { setBackgroundColor(Neon.withAlpha(Neon.BLUE, 70)) }, LinearLayout.LayoutParams(dp(1), -1))
-        cols.addView(titled("CHANNELS", chanRv), LinearLayout.LayoutParams(0, -1, 0.47f))
+        cols.addView(titled("CHANNELS", chanRv), LinearLayout.LayoutParams(0, -1, 0.51f))
         val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(4), 0, 0) }
         head.addView(OrbView(this).apply { energy = 0.2f }, LinearLayout.LayoutParams(dp(48), dp(48)))
         head.addView(TextView(this).apply { text = "Live TV"; setTextColor(Neon.TEXT); textSize = 26f; typeface = Typeface.create("sans-serif-light", Typeface.NORMAL); setPadding(dp(14), 0, 0, 0) })
@@ -1812,18 +1812,18 @@ class MainActivity : Activity() {
         override fun onCreateViewHolder(p: ViewGroup, t: Int): VH {
             val row = LinearLayout(p.context).apply {
                 orientation = LinearLayout.HORIZONTAL; isFocusable = true; isClickable = true
-                background = rowBg(); setPadding(dp(16), dp(10), dp(16), dp(10))
-                layoutParams = RecyclerView.LayoutParams(-1, -2).apply { setMargins(dp(2), dp(3), dp(2), dp(3)) }
+                background = rowBg(); setPadding(dp(14), dp(if (icon != null) 5 else 7), dp(14), dp(if (icon != null) 5 else 7))   // denser rows: more lines per screen
+                layoutParams = RecyclerView.LayoutParams(-1, -2).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
             }
             val logo = if (icon != null) ImageView(p.context).apply {
-                scaleType = ImageView.ScaleType.FIT_CENTER; setPadding(dp(3), dp(3), dp(3), dp(3))
+                scaleType = ImageView.ScaleType.FIT_CENTER; setPadding(dp(2), dp(2), dp(2), dp(2))
                 background = GradientDrawable().apply { setColor(Neon.withAlpha(Color.WHITE, 235)); cornerRadius = dp(8).toFloat() }
             } else null
-            if (logo != null) row.addView(logo, LinearLayout.LayoutParams(dp(54), dp(40)).apply { rightMargin = dp(12); gravity = Gravity.CENTER_VERTICAL })
-            val tagTv = TextView(p.context).apply { textSize = 14f; setTypeface(null, Typeface.BOLD); setPadding(dp(10), 0, 0, 0) }
-            val n = TextView(p.context).apply { setTextColor(Neon.TEXT); textSize = 20f; setSingleLine(); ellipsize = android.text.TextUtils.TruncateAt.END }
-            val c = TextView(p.context).apply { setTextColor(Neon.MUTED); textSize = 16f; setPadding(dp(12), 0, 0, 0) }
-            val starTv = TextView(p.context).apply { text = "★"; setTextColor(Color.parseColor("#FFD60A")); textSize = 24f; setPadding(0, 0, dp(10), 0); visibility = View.GONE }
+            if (logo != null) row.addView(logo, LinearLayout.LayoutParams(dp(44), dp(32)).apply { rightMargin = dp(10); gravity = Gravity.CENTER_VERTICAL })
+            val tagTv = TextView(p.context).apply { textSize = 13f; setTypeface(null, Typeface.BOLD); setPadding(dp(10), 0, 0, 0) }
+            val n = TextView(p.context).apply { setTextColor(Neon.TEXT); textSize = 18f; setSingleLine(); ellipsize = android.text.TextUtils.TruncateAt.END }
+            val c = TextView(p.context).apply { setTextColor(Neon.MUTED); textSize = 15f; setPadding(dp(12), 0, 0, 0) }
+            val starTv = TextView(p.context).apply { text = "★"; setTextColor(Color.parseColor("#FFD60A")); textSize = 20f; setPadding(0, 0, dp(10), 0); visibility = View.GONE }
             row.addView(starTv, LinearLayout.LayoutParams(-2, -2))
             row.addView(n, LinearLayout.LayoutParams(0, -2, 1f)); row.addView(tagTv, LinearLayout.LayoutParams(-2, -2)); row.addView(c, LinearLayout.LayoutParams(-2, -2))
             row.gravity = Gravity.CENTER_VERTICAL
@@ -1841,11 +1841,11 @@ class MainActivity : Activity() {
             h.star.visibility = if (fav?.invoke(it) == true) View.VISIBLE else if (fav != null) View.INVISIBLE else View.GONE
             val tg = tag?.invoke(it); h.tagView.text = tg?.first ?: ""; h.tagView.visibility = if (tg == null) View.GONE else View.VISIBLE; if (tg != null) h.tagView.setTextColor(tg.second)
             val url = icon?.invoke(it)
-            if (h.logo != null) { h.logo.alpha = 1f; h.logo.background = GradientDrawable().apply { setColor(if (url.isNullOrEmpty()) Color.parseColor("#1B2650") else Neon.withAlpha(Color.WHITE, 235)); cornerRadius = dp(8).toFloat() }; if (!url.isNullOrEmpty()) h.logo.load(url) { size(108, 80); crossfade(false); listener(onError = { _, _ -> h.logo.background = GradientDrawable().apply { setColor(Color.parseColor("#1B2650")); cornerRadius = dp(8).toFloat() }; h.logo.setImageDrawable(InitialsDrawable(Neon.plain(label(it)).removePrefix("PL: ").take(2).uppercase(), dp(40))) }) } else { h.logo.dispose(); h.logo.setImageDrawable(InitialsDrawable(Neon.plain(label(it)).removePrefix("PL: ").take(2).uppercase(), dp(40))) } }
+            if (h.logo != null) { h.logo.alpha = 1f; h.logo.background = GradientDrawable().apply { setColor(if (url.isNullOrEmpty()) Color.parseColor("#1B2650") else Neon.withAlpha(Color.WHITE, 235)); cornerRadius = dp(8).toFloat() }; if (!url.isNullOrEmpty()) h.logo.load(url) { size(88, 64); crossfade(false); listener(onError = { _, _ -> h.logo.background = GradientDrawable().apply { setColor(Color.parseColor("#1B2650")); cornerRadius = dp(8).toFloat() }; h.logo.setImageDrawable(InitialsDrawable(Neon.plain(label(it)).removePrefix("PL: ").take(2).uppercase(), dp(32))) }) } else { h.logo.dispose(); h.logo.setImageDrawable(InitialsDrawable(Neon.plain(label(it)).removePrefix("PL: ").take(2).uppercase(), dp(32))) } }
             val hdr = (it as? Channel)?.isHeader == true
             h.itemView.isFocusable = !hdr; h.itemView.isClickable = !hdr
-            if (hdr) { h.logo?.visibility = View.GONE; h.count.visibility = View.GONE; h.itemView.background = null; h.name.setTextColor(Neon.CYAN); h.name.textSize = 15f; h.name.letterSpacing = 0.15f; h.star.visibility = View.GONE; h.tagView.visibility = View.GONE }
-            else { h.logo?.visibility = View.VISIBLE; h.count.visibility = View.VISIBLE; h.name.setTextColor(Neon.TEXT); h.name.textSize = 20f; h.name.letterSpacing = 0f }
+            if (hdr) { h.logo?.visibility = View.GONE; h.count.visibility = View.GONE; h.itemView.background = null; h.name.setTextColor(Neon.CYAN); h.name.textSize = 14f; h.name.letterSpacing = 0.15f; h.itemView.setPadding(dp(14), dp(8), dp(14), dp(4)); h.star.visibility = View.GONE; h.tagView.visibility = View.GONE }
+            else { h.logo?.visibility = View.VISIBLE; h.count.visibility = View.VISIBLE; h.name.setTextColor(Neon.TEXT); h.name.textSize = 18f; h.name.letterSpacing = 0f; h.itemView.setPadding(dp(14), dp(if (icon != null) 5 else 7), dp(14), dp(if (icon != null) 5 else 7)) }
             h.name.setCompoundDrawablesRelativeWithIntrinsicBounds(glyph?.invoke(it)?.let { g -> GlyphDrawable(g, dp(22)) }, null, null, null); h.name.compoundDrawablePadding = dp(12)
             h.name.setTypeface(null, if (i == activeIdx || i == movingIdx) Typeface.BOLD else Typeface.NORMAL)
             h.itemView.setBackgroundColor(Color.TRANSPARENT)
