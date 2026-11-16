@@ -9,8 +9,8 @@ android {
         applicationId = "pl.home.channeldeck"
         minSdk = 22
         targetSdk = 34
-        versionCode = 14
-        versionName = "0.9.2"
+        versionCode = 15
+        versionName = "0.9.3"
     }
     // Self-update only works when every build is signed with the same key. CI passes the shared key through IPTV_KEYSTORE
     // (the same file as ~/.android/debug.keystore on the build machine, so sticks installed from local builds keep updating).

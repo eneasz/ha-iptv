@@ -241,7 +241,7 @@ class MainActivity : Activity() {
         fun rr(c: Int, stroke: Int, w: Float) = GradientDrawable().apply { setColor(c); cornerRadius = dp(14).toFloat(); setStroke((w * resources.displayMetrics.density).toInt(), stroke) }
         return StateListDrawable().apply {
             addState(intArrayOf(android.R.attr.state_focused), rr(Color.parseColor("#172863"), Neon.YELLOW, 2.5f))
-            addState(intArrayOf(android.R.attr.state_selected), rr(Color.parseColor("#142053"), Neon.withAlpha(Neon.CYAN, 170), 1.5f))
+            addState(intArrayOf(android.R.attr.state_selected), rr(Color.parseColor("#1A2A66"), Color.TRANSPARENT, 0f))
             addState(intArrayOf(), ColorDrawable(Color.TRANSPARENT))
         }
     }
@@ -296,11 +296,11 @@ class MainActivity : Activity() {
             icon = { it.icon }, tag = { offTag(it) ?: Quality.rowTag(it.name, prefs.measured(it.id)) })
         groupRv = rv(groupAdapter)
         chanRv = rv(chanAdapter)
-        cols.addView(titled("REGIONS", regionRv), LinearLayout.LayoutParams(0, -1, 0.16f))
+        cols.addView(titled("REGIONS", regionRv), LinearLayout.LayoutParams(0, -1, 0.20f))
         cols.addView(View(this).apply { setBackgroundColor(Neon.withAlpha(Neon.BLUE, 70)) }, LinearLayout.LayoutParams(dp(1), -1))
-        cols.addView(titled("GROUPS", groupRv), LinearLayout.LayoutParams(0, -1, 0.33f))
+        cols.addView(titled("GROUPS", groupRv), LinearLayout.LayoutParams(0, -1, 0.27f))
         cols.addView(View(this).apply { setBackgroundColor(Neon.withAlpha(Neon.BLUE, 70)) }, LinearLayout.LayoutParams(dp(1), -1))
-        cols.addView(titled("CHANNELS", chanRv), LinearLayout.LayoutParams(0, -1, 0.51f))
+        cols.addView(titled("CHANNELS", chanRv), LinearLayout.LayoutParams(0, -1, 0.53f))
         val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(4), 0, 0) }
         head.addView(OrbView(this).apply { energy = 0.2f }, LinearLayout.LayoutParams(dp(48), dp(48)))
         head.addView(TextView(this).apply { text = "Live TV"; setTextColor(Neon.TEXT); textSize = 26f; typeface = Typeface.create("sans-serif-light", Typeface.NORMAL); setPadding(dp(14), 0, 0, 0) })
@@ -606,6 +606,7 @@ class MainActivity : Activity() {
             }
         }
         val list = repo.channels(gid)
+        chanAdapter.showFavStar = gid != Repo.FAV
         chanAdapter.setAll(list)
         chanAdapter.activeIdx = list.indexOfFirst { it.id == playing?.id }
         // rebind just the two affected rows: a full notifyDataSetChanged() would reset D-pad focus
@@ -1792,6 +1793,7 @@ class MainActivity : Activity() {
         var items: MutableList<T> = ArrayList()
         var activeIdx = -1
         var movingIdx = -1
+        var showFavStar = true   // off inside Favourites: every row is a favourite there
         /** Updates rows in place (never notifyDataSetChanged) so a list that holds D-pad focus keeps it. */
         fun setAll(l: List<T>) {
             val old = items; val nw = ArrayList(l)
@@ -1822,7 +1824,7 @@ class MainActivity : Activity() {
             if (logo != null) row.addView(logo, LinearLayout.LayoutParams(dp(44), dp(32)).apply { rightMargin = dp(10); gravity = Gravity.CENTER_VERTICAL })
             val tagTv = TextView(p.context).apply { textSize = 13f; setTypeface(null, Typeface.BOLD); setPadding(dp(10), 0, 0, 0) }
             val n = TextView(p.context).apply { setTextColor(Neon.TEXT); textSize = 18f; setSingleLine(); ellipsize = android.text.TextUtils.TruncateAt.END }
-            val c = TextView(p.context).apply { setTextColor(Neon.MUTED); textSize = 15f; setPadding(dp(12), 0, 0, 0) }
+            val c = TextView(p.context).apply { setTextColor(Color.parseColor("#A9B8D8")); textSize = 16f; setPadding(dp(12), 0, 0, 0) }
             val starTv = TextView(p.context).apply { text = "★"; setTextColor(Color.parseColor("#FFD60A")); textSize = 20f; setPadding(0, 0, dp(10), 0); visibility = View.GONE }
             row.addView(starTv, LinearLayout.LayoutParams(-2, -2))
             row.addView(n, LinearLayout.LayoutParams(0, -2, 1f)); row.addView(tagTv, LinearLayout.LayoutParams(-2, -2)); row.addView(c, LinearLayout.LayoutParams(-2, -2))
@@ -1838,7 +1840,7 @@ class MainActivity : Activity() {
             val it = items[i]
             h.name.text = (if (i == movingIdx) "⇅  " else "") + Neon.plain(label(it)); h.count.text = sub(it)
             h.itemView.isSelected = i == activeIdx
-            h.star.visibility = if (fav?.invoke(it) == true) View.VISIBLE else if (fav != null) View.INVISIBLE else View.GONE
+            h.star.visibility = if (!showFavStar) View.GONE else if (fav?.invoke(it) == true) View.VISIBLE else if (fav != null) View.INVISIBLE else View.GONE
             val tg = tag?.invoke(it); h.tagView.text = tg?.first ?: ""; h.tagView.visibility = if (tg == null) View.GONE else View.VISIBLE; if (tg != null) h.tagView.setTextColor(tg.second)
             val url = icon?.invoke(it)
             if (h.logo != null) { h.logo.alpha = 1f; h.logo.background = GradientDrawable().apply { setColor(if (url.isNullOrEmpty()) Color.parseColor("#1B2650") else Neon.withAlpha(Color.WHITE, 235)); cornerRadius = dp(8).toFloat() }; if (!url.isNullOrEmpty()) h.logo.load(url) { size(88, 64); crossfade(false); listener(onError = { _, _ -> h.logo.background = GradientDrawable().apply { setColor(Color.parseColor("#1B2650")); cornerRadius = dp(8).toFloat() }; h.logo.setImageDrawable(InitialsDrawable(Neon.plain(label(it)).removePrefix("PL: ").take(2).uppercase(), dp(32))) }) } else { h.logo.dispose(); h.logo.setImageDrawable(InitialsDrawable(Neon.plain(label(it)).removePrefix("PL: ").take(2).uppercase(), dp(32))) } }

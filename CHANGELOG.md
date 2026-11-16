@@ -1,4 +1,6 @@
 # Changelog
+## 0.5.3
+- App 0.9.3: Live TV menu fixes from the UX review. The Regions column is wider (regions 20 %, groups 27 %, channels 53 %), so "Favs" and other region names are no longer cut to "F…". Only the focused row has an outline now; the row you are on in another column is shown as a plain filled pill, so it is clear where the cursor is. Inside Favourites the per-row star is gone (every row is a favourite), which gives channel names more room. Counts and channel numbers are brighter.
 ## 0.5.2
 - App 0.9.2: denser Live TV menu. Smaller row text (18 sp), tighter rows and smaller channel logos show about 9–10 groups and 7–8 channels at once (before: 7 and 5). The channels column is wider (regions 16 %, groups 33 %, channels 51 %), so long channel names truncate less.
 - First release signed with the fixed key, so a TV can update itself from it (0.5.1 was built before the signing secret worked; sticks on 0.9.1 from a local build update to 0.9.2 normally).
