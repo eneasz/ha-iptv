@@ -39,12 +39,12 @@ button:focus-visible,input:focus-visible{outline:3px solid var(--ring);outline-o
 .mback:hover{background:rgba(255,255,255,.24)}
 .menu.one-group .col.g{display:none}
 .col{display:flex;flex-direction:column;min-width:0}
-.col.r{flex:0 0 17%}.col.g{flex:0 0 27%}.col.c{flex:1}
+.col.r{flex:0 0 max(17%,200px)}.col.g{flex:0 0 27%}.col.c{flex:1}
 .col h2{margin:0 0 10px;font-size:15px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;opacity:.7}
 .col input::placeholder{color:#a9b0cc}
 .col input{padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.07);color:inherit;font-size:17px;margin-bottom:10px}
 .col input:focus{border:2px solid var(--blue);outline:none}
-.list{overflow:auto;flex:1;padding:4px}
+.list{overflow:auto;flex:1;padding:8px 8px}
 .row{display:flex;align-items:center;gap:12px;width:100%;padding:11px 14px;border-radius:12px;background:transparent;text-align:left;font-size:19px;min-height:48px}
 .row:hover{background:#172863}
 .row.sel{background:#1a2a66;box-shadow:inset 4px 0 0 var(--blue)}
@@ -52,6 +52,7 @@ button:focus-visible,input:focus-visible{outline:3px solid var(--ring);outline-o
 .row .n{opacity:.7;font-size:15px;min-width:42px}
 .row .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row .fav{opacity:.55;font-size:22px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center;cursor:pointer}.row .fav:hover,.row .fav.on{opacity:1;color:#ffcf40}
+.row .np{display:block;font-size:13px;opacity:.65;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row .k{opacity:.6;font-size:15px}
 .empty{opacity:.7;padding:24px 16px;font-size:17px}
 .hint{color:#c4cce4;font-size:14px;padding:18px 4px 0;background:linear-gradient(transparent,rgba(3,6,24,.9) 40%)}
@@ -179,6 +180,7 @@ class HaIptvPlayer extends HTMLElement {
   renderRegions() {
     const box = this.$("regions"); box.innerHTML = "";
     (this.regions || []).forEach((x) => box.append(this.row(`<span class="t">${this.esc(x.name)}</span><span class="k">${x.id === RECENT ? (this.saved.recent || []).length : x.channels != null ? x.channels : ""}</span>`, x.id == this.region ? "sel" : "", () => this.selectRegion(x.id))));
+    const sel = box.querySelector(".row.sel"); if (sel && sel.scrollIntoView && this.menuOn) sel.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
 
   // ---------------------------------------------------------------- UI helpers
@@ -222,6 +224,20 @@ class HaIptvPlayer extends HTMLElement {
   }
   favIds = new Set();
   noteFavs(list) { (list || []).forEach((c) => { if (typeof c.fav === "boolean") c.fav ? this.favIds.add(String(c.id)) : this.favIds.delete(String(c.id)); }); }
+  async loadNow() {
+    const my = (this._nowTok = (this._nowTok || 0) + 1), rows = [...this.$("chans").querySelectorAll(".row")];
+    const ids = this.chans.slice(0, 40).map((c) => c.id);
+    if (!ids.length) return;
+    try {
+      const g = await this.json("/epg?ids=" + ids.join(","));
+      if (my !== this._nowTok) return;
+      const now = Date.now() / 1000;
+      ids.forEach((id, i) => {
+        const l = g[id] || [], p = l.find((x) => x && x.start <= now && now < x.stop) || null, el = rows[i] && rows[i].querySelector(".np");
+        if (p && el) el.textContent = p.title;
+      });
+    } catch (e) {}
+  }
   isFav(c) { return this.favIds.has(String(c.id)); }
   async toggleFav(c) {
     const on = !this.isFav(c);
@@ -245,10 +261,11 @@ class HaIptvPlayer extends HTMLElement {
     const box = this.$("chans"); box.innerHTML = ""; this.$("ch").textContent = this.$("cq").value.trim().length >= 2 ? "Search results" : (this.groupName() || "Channels");
     if (!this.chans.length) box.innerHTML = `<div class="empty">${this.group == null ? "Select a group on the left to see its channels." : this.group === RECENT ? "Channels you watch will show up here." : this.group === FAV ? "No favourites yet. Press H or the heart on a channel to add one." : "No channels."}</div>`;
     this.chans.forEach((c) => {
-      const b = this.row(`${c.icon ? `<img loading="lazy" src="${this.esc(c.icon)}" alt="">` : ""}<span class="n">${this.esc(c.num)}</span><span class="t">${this.esc(c.name)}</span><span class="fav ${this.isFav(c) ? "on" : ""}" role="button" aria-label="Toggle favourite" title="Favourite (H)">${this.isFav(c) ? "♥" : "♡"}</span>`, this.cur && this.cur.id == c.id ? "sel" : "", () => { this.closeMenu(); this.play(c); });
+      const b = this.row(`${c.icon ? `<img loading="lazy" src="${this.esc(c.icon)}" alt="">` : ""}<span class="n">${this.esc(c.num)}</span><span class="t">${this.esc(c.name)}<small class="np"></small></span><span class="fav ${this.isFav(c) ? "on" : ""}" role="button" aria-label="Toggle favourite" title="Favourite (H)">${this.isFav(c) ? "♥" : "♡"}</span>`, this.cur && this.cur.id == c.id ? "sel" : "", () => { this.closeMenu(); this.play(c); });
       b.querySelector(".fav").onclick = (e) => { e.stopPropagation(); this.toggleFav(c); };
       box.append(b);
     });
+    this.loadNow();
   }
   openMenu(col) { this.menuOn = true; this.stage.classList.add("menu-on"); this.$("menu").classList.add("on"); this.stage.classList.remove("idle"); this.focusCol(col || (this.chans.length ? "c" : "r")); }
   closeMenu() { this.menuOn = false; this.stage.classList.remove("menu-on"); this.$("menu").classList.remove("on"); this.stage.focus(); this.poke(); }

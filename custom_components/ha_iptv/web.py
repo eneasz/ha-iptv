@@ -295,6 +295,40 @@ class FavView(HomeAssistantView):
         return self.json_message("no stick is running the app", 503)
 
 
+class EpgView(HomeAssistantView):
+    """What is on now for a handful of channels (the channel menu's second line)."""
+
+    url = "/api/ha_iptv/epg"
+    name = "api:ha_iptv:epg"
+    requires_auth = True
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self._hass = hass
+        self._memo: dict[str, tuple[float, Any]] = {}
+
+    async def get(self, request: web.Request) -> web.Response:
+        ids = [i for i in request.query.get("ids", "").split(",") if CHANNEL_ID.match(i)][:40]
+        if not ids:
+            return self.json({})
+        c = _coord(self._hass)
+        if c is None:
+            return self.json_message("no stick configured", 503)
+        now = time.monotonic()
+        out = {i: self._memo[i][1] for i in ids if i in self._memo and self._memo[i][0] > now}
+        todo = [i for i in ids if i not in out]
+        if todo:
+            try:
+                got = await c.api.epg(todo, limit=2)
+            except Exception:  # app not running: no guide, the menu just has no second line
+                return self.json(out)
+            if len(self._memo) > 2000:
+                self._memo.clear()
+            for i in todo:
+                self._memo[i] = (now + 120, got.get(i) or [])
+                out[i] = got.get(i) or []
+        return self.json(out)
+
+
 class SearchView(HomeAssistantView):
     url = "/api/ha_iptv/search"
     name = "api:ha_iptv:search"
@@ -359,6 +393,7 @@ async def async_register_views(hass: HomeAssistant) -> None:
     hass.http.register_view(ChannelsView(hass, cache))
     hass.http.register_view(SearchView(hass))
     hass.http.register_view(FavView(hass, cache))
+    hass.http.register_view(EpgView(hass))
     try:
         await _async_register_panel(hass)
     except Exception:  # never let the player panel stop the integration from loading

@@ -1,4 +1,7 @@
 # Changelog
+## 0.6.5
+- Player: a **now-playing line** under each channel name in the menu (from the stick's programme guide; empty when the app isn't running).
+- Player layout fixes for tablets and small screens: the Regions column no longer truncates names, the focus ring is no longer clipped, and the selected region chip scrolls into view on phones.
 ## 0.6.4
 - Player: **Left** opens the Regions / Groups menu and **Right** the channel list while playing, as on the stick (volume stays on + / - and the remote's volume buttons).
 - Player: a **Back** button in the menu, so the mouse can leave it.
