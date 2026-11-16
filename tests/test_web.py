@@ -42,3 +42,39 @@ def test_store_is_bounded(monkeypatch):
     for i in range(20):
         t.register(f"http://x/{i}")
     assert len(t._m) <= 5
+
+
+class _Offline:
+    groups: list = []
+    regions: list = []
+    connected = False
+
+    class api:
+        @staticmethod
+        async def provision():
+            raise OSError("app not running")
+
+    async def async_refresh_catalog(self):
+        return None
+
+
+async def test_offline_sticks_fall_back_to_cached_catalogue(hass):
+    import json as _json
+
+    from custom_components.ha_iptv.const import DOMAIN
+    from custom_components.ha_iptv.web import Cache, GroupsView, _Provider
+
+    cache = Cache(hass)
+    await cache.load()
+    cache.data.update(groups=[{"id": "g1", "name": "News", "count": 3}], regions=[], login={"server": "http://p", "user": "u", "pass": "x"})
+    hass.data[DOMAIN] = {"e1": _Offline()}
+    resp = await GroupsView(hass, cache).get(None)
+    body = _json.loads(resp.body)
+    assert body["groups"][0]["name"] == "News" and body["cached"] is True
+    prov = _Provider(hass, cache)
+    assert (await prov.login())["user"] == "u"
+    prov.forget()
+    assert "login" not in cache.data
+    cache.data.pop("groups")
+    resp = await GroupsView(hass, cache).get(None)
+    assert resp.status == 503

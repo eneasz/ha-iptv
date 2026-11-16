@@ -1,4 +1,8 @@
 # Changelog
+## 0.6.1
+- **Player works while no stick runs the app.** Home Assistant now remembers the last channel catalogue (groups, channels you opened) and the provider login, so the IPTV panel no longer shows an empty list when the TV is on another app. Open the HA IPTV app on a stick once so HA can learn the catalogue.
+- **Search all channels** from the channel menu (2+ letters), **Favourites** (heart on a channel, or H) and a **Recent** group. The menu opens with a group already loaded.
+- Clearer message when no groups can be loaded.
 ## 0.6.0
 - **Browser player.** New **IPTV** panel in the Home Assistant sidebar (`/iptv-player`): full-screen live TV in any desktop browser, resumes your last channel, channel menu (groups and channels), keyboard control (arrows, Enter, Space, M, F, G, Backspace) and a transparent on-screen remote that appears when the mouse is near the bottom-right corner (click the corner button to pin it). Press F or double-click for full screen.
 - **Launcher card** `custom:ha-iptv-card`: muted live preview of the last channel and a Watch button that opens the player.

@@ -25,6 +25,7 @@ from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
 
@@ -74,11 +75,30 @@ class TokenStore:
         return v[1]
 
 
+class Cache:
+    """Last known catalogue and provider login, kept in HA storage so the player works while no stick runs the app."""
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self._store = Store(hass, 1, "ha_iptv_player_cache")
+        self.data: dict[str, Any] = {}
+        self._loaded = False
+
+    async def load(self) -> dict[str, Any]:
+        if not self._loaded:
+            self.data = await self._store.async_load() or {}
+            self._loaded = True
+        return self.data
+
+    def save(self) -> None:
+        self._store.async_delay_save(lambda: self.data, 5)
+
+
 class _Provider:
     """Provider login, fetched once from a stick through its provisioning endpoint."""
 
-    def __init__(self, hass: HomeAssistant) -> None:
+    def __init__(self, hass: HomeAssistant, cache: Cache) -> None:
         self._hass = hass
+        self._cache = cache
         self._login: dict[str, str] | None = None
         self._lock = asyncio.Lock()
 
@@ -86,18 +106,23 @@ class _Provider:
         async with self._lock:
             if self._login:
                 return self._login
+            await self._cache.load()
             for coord in [c for k, c in self._hass.data.get(DOMAIN, {}).items() if hasattr(c, "api")]:
                 try:
                     got = await coord.api.provision()
-                except Exception:  # stick offline, try the next one
+                except Exception:  # app not running on this stick, try the next one
                     continue
                 if got.get("server") and got.get("user"):
                     self._login = {"server": got["server"].rstrip("/"), "user": got["user"], "pass": got.get("pass", "")}
+                    self._cache.data["login"] = self._login
+                    self._cache.save()
                     return self._login
-            return None
+            self._login = (await self._cache.load()).get("login")  # no stick answers: last known login
+            return self._login
 
     def forget(self) -> None:
         self._login = None
+        self._cache.data.pop("login", None)  # rejected by the provider: don't fall back to it
 
 
 class StreamView(HomeAssistantView):
@@ -170,16 +195,67 @@ class SegmentView(HomeAssistantView):
 
 
 def _coord(hass: HomeAssistant):
-    """First configured stick (the catalogue is the same on all of them)."""
-    for c in hass.data.get(DOMAIN, {}).values():
-        if hasattr(c, "api") and hasattr(c, "groups"):
-            return c
-    return None
+    """A configured stick that is online if possible (the catalogue is the same on all of them)."""
+    sticks = [c for c in hass.data.get(DOMAIN, {}).values() if hasattr(c, "api") and hasattr(c, "groups")]
+    return next((c for c in sticks if getattr(c, "connected", False)), sticks[0] if sticks else None)
 
 
 class GroupsView(HomeAssistantView):
     url = "/api/ha_iptv/groups"
     name = "api:ha_iptv:groups"
+    requires_auth = True
+
+    def __init__(self, hass: HomeAssistant, cache: Cache) -> None:
+        self._hass, self._cache = hass, cache
+
+    async def get(self, request: web.Request) -> web.Response:
+        sticks = [c for c in self._hass.data.get(DOMAIN, {}).values() if hasattr(c, "api") and hasattr(c, "groups")]
+        if not sticks:
+            return self.json_message("no stick configured", 503)
+        cached = await self._cache.load()
+        # prefer a stick that already has the catalogue, else ask each one until a stick answers
+        for c in sorted(sticks, key=lambda x: not x.groups):
+            if not c.groups:
+                await c.async_refresh_catalog()
+            if c.groups:
+                cached["groups"], cached["regions"] = c.groups, c.regions
+                self._cache.save()
+                return self.json({"groups": c.groups, "regions": c.regions})
+        if cached.get("groups"):  # no stick runs the app right now: serve the last known catalogue
+            return self.json({"groups": cached["groups"], "regions": cached.get("regions", []), "cached": True})
+        return self.json_message("no channel catalogue yet: open the HA IPTV app on a stick once so Home Assistant can learn it", 503)
+
+
+class ChannelsView(HomeAssistantView):
+    url = "/api/ha_iptv/channels/{group}"
+    name = "api:ha_iptv:channels"
+    requires_auth = True
+
+    def __init__(self, hass: HomeAssistant, cache: Cache) -> None:
+        self._hass, self._cache = hass, cache
+
+    async def get(self, request: web.Request, group: str) -> web.Response:
+        c = _coord(self._hass)
+        if c is None:
+            return self.json_message("no stick configured", 503)
+        store = (await self._cache.load()).setdefault("channels", {})
+        try:
+            chans = await c.async_channels(group)
+        except Exception as err:  # app not running on this stick
+            if group in store:
+                return self.json(store[group])
+            return self.json_message(type(err).__name__, 502)
+        if chans and store.get(group) != chans:
+            if len(store) >= 300:
+                store.pop(next(iter(store)))
+            store[group] = chans
+            self._cache.save()
+        return self.json(chans)
+
+
+class SearchView(HomeAssistantView):
+    url = "/api/ha_iptv/search"
+    name = "api:ha_iptv:search"
     requires_auth = True
 
     def __init__(self, hass: HomeAssistant) -> None:
@@ -189,25 +265,11 @@ class GroupsView(HomeAssistantView):
         c = _coord(self._hass)
         if c is None:
             return self.json_message("no stick configured", 503)
-        if not c.groups:
-            await c.async_refresh_catalog()
-        return self.json({"groups": c.groups, "regions": c.regions})
-
-
-class ChannelsView(HomeAssistantView):
-    url = "/api/ha_iptv/channels/{group}"
-    name = "api:ha_iptv:channels"
-    requires_auth = True
-
-    def __init__(self, hass: HomeAssistant) -> None:
-        self._hass = hass
-
-    async def get(self, request: web.Request, group: str) -> web.Response:
-        c = _coord(self._hass)
-        if c is None:
-            return self.json_message("no stick configured", 503)
+        q = request.query.get("q", "").strip()[:60]
+        if len(q) < 2:
+            return self.json([])
         try:
-            return self.json(await c.async_channels(group))
+            return self.json(await c.api.search(q, limit=50))
         except Exception as err:  # stick offline
             return self.json_message(type(err).__name__, 502)
 
@@ -247,11 +309,13 @@ async def async_register_views(hass: HomeAssistant) -> None:
     if data.get("_views"):
         return
     data["_views"] = True
-    tokens, provider = TokenStore(), _Provider(hass)
+    cache = Cache(hass)
+    tokens, provider = TokenStore(), _Provider(hass, cache)
     hass.http.register_view(StreamView(hass, tokens, provider))
     hass.http.register_view(SegmentView(hass, tokens))
-    hass.http.register_view(GroupsView(hass))
-    hass.http.register_view(ChannelsView(hass))
+    hass.http.register_view(GroupsView(hass, cache))
+    hass.http.register_view(ChannelsView(hass, cache))
+    hass.http.register_view(SearchView(hass))
     try:
         await _async_register_panel(hass)
     except Exception:  # never let the player panel stop the integration from loading

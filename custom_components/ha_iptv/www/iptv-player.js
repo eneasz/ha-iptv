@@ -1,5 +1,6 @@
 /* HA IPTV full-screen player panel (/iptv-player). Plays live channels through the ha_iptv proxy views. */
 const API = "/api/ha_iptv";
+const RECENT = "__recent", FAV = "__fav", SEARCH = "__search";
 const LS = "ha_iptv_player";
 const css = `
 :host{display:block;height:100%;background:#000;color:#eef2ff;font-family:Roboto,system-ui,sans-serif;--glass:rgba(12,18,48,.78);--ring:#f4ff00;--blue:#2a6bff}
@@ -44,6 +45,7 @@ button:focus-visible,.row:focus-visible,input:focus-visible{outline:3px solid va
 .row img{width:34px;height:34px;object-fit:contain;border-radius:6px;background:#fff}
 .row .n{opacity:.6;font-size:15px;min-width:42px}
 .row .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .fav{opacity:.35;font-size:20px;padding:0 6px;cursor:pointer}.row .fav:hover,.row .fav.on{opacity:1;color:#ffcf40}
 .row .k{opacity:.6;font-size:15px}
 .empty{opacity:.7;padding:24px 16px;font-size:17px}
 .hint{color:#c4cce4;font-size:14px;padding:10px 4px 0}
@@ -57,7 +59,7 @@ const tpl = `
   <div class="state" id="state"></div>
   <div class="menu" id="menu">
     <div class="col g"><h2>Groups</h2><input id="gq" placeholder="Filter groups (type to search)" aria-label="Filter groups"><div class="list" id="groups"></div></div>
-    <div class="col c"><h2 id="ch">Channels</h2><div class="list" id="chans"></div><div class="hint">Pick a channel to start. ▲▼ browse, Enter plays, Backspace closes.</div></div>
+    <div class="col c"><h2 id="ch">Channels</h2><input id="cq" placeholder="Search all channels (2+ letters)" aria-label="Search all channels"><div class="list" id="chans"></div><div class="hint">▲▼ browse · Enter plays · H favourite · Backspace closes</div></div>
   </div>
   <div class="hot" id="hot">
     <button class="fab" id="fab" aria-label="Remote control" aria-expanded="false"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm4 3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM9 11h6v2H9zm0 4h6v2H9z"/></svg></button>
@@ -108,6 +110,7 @@ class HaIptvPlayer extends HTMLElement {
       await this.loadHls();
       const d = await this.json("/groups");
       this.groups = (d.groups || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+      this.groups.unshift({ id: FAV, name: "♥ Favourites", count: (this.saved.favs || []).length }, { id: RECENT, name: "★ Recent", count: (this.saved.recent || []).length });
     } catch (e) { this.setState("error", "Can't reach the HA IPTV integration (" + e.message + ")."); return; }
     this.renderGroups(); this.renderChannels();
     const s = this.saved;
@@ -116,6 +119,9 @@ class HaIptvPlayer extends HTMLElement {
       const c = this.chans.find((x) => x.id == s.id);
       if (c) { this.play(c); return; }
     }
+    // nothing to resume: open the menu with a group already loaded so the screen is never half-empty
+    const first = (this.saved.favs || []).length ? FAV : (this.saved.recent || []).length ? RECENT : (this.groups[2] || this.groups[0] || {}).id;
+    if (first != null) { this.group = first; await this.loadChannels(first); this.renderGroups(); }
     this.setState(null); this.openMenu();
   }
 
@@ -123,7 +129,8 @@ class HaIptvPlayer extends HTMLElement {
   async play(c) {
     this.cur = c; this.setState("loading", "Tuning " + c.name + "…");
     this.toast(c.name, this.groupName());
-    this.saved = { ...this.saved, group: this.group, id: c.id, name: c.name }; try { localStorage.setItem(LS, JSON.stringify(this.saved)); } catch (e) {}
+    const rec = [{ id: c.id, name: c.name, num: c.num, icon: c.icon }, ...(this.saved.recent || []).filter((x) => x.id != c.id)].slice(0, 20);
+    this.saved = { ...this.saved, group: this.group, id: c.id, name: c.name, recent: rec }; try { localStorage.setItem(LS, JSON.stringify(this.saved)); } catch (e) {}
     if (this.hls) { this.hls.destroy(); this.hls = null; }
     const url = `${API}/stream/${c.id}.m3u8`;
     if (!window.Hls || !Hls.isSupported()) { this.setState("error", "This browser can't play live HLS."); return; }
@@ -171,6 +178,8 @@ class HaIptvPlayer extends HTMLElement {
   // ---------------------------------------------------------------- menu
   async loadChannels(gid) {
     this.$("chans").innerHTML = '<div class="empty">Loading…</div>';
+    if (gid === FAV) { this.chans = (this.saved.favs || []).slice(); this.renderChannels(); return; }
+    if (gid === RECENT) { this.chans = (this.saved.recent || []).slice(); this.renderChannels(); return; }
     try { this.chans = await this.json("/channels/" + encodeURIComponent(gid)); } catch (e) { this.chans = []; this.$("chans").innerHTML = '<div class="empty">Could not load channels.</div>'; return; }
     this.renderChannels();
   }
@@ -179,13 +188,33 @@ class HaIptvPlayer extends HTMLElement {
   renderGroups() {
     const q = this.$("gq").value.trim().toLowerCase(), box = this.$("groups"); box.innerHTML = "";
     const list = this.groups.filter((g) => !q || g.name.toLowerCase().includes(q));
-    if (!list.length) box.innerHTML = '<div class="empty">No group matches.</div>';
+    if (!list.length) box.innerHTML = `<div class="empty">${q ? "No group matches." : "No channel groups loaded. Check that a stick is online and a region is selected in the app."}</div>`;
     list.forEach((g) => box.append(this.row(`<span class="t">${this.esc(g.name)}</span><span class="k">${g.count}</span>`, g.id == this.group ? "sel" : "", async () => { this.group = g.id; this.renderGroups(); await this.loadChannels(g.id); this.focusCol("c"); })));
   }
+  isFav(c) { return (this.saved.favs || []).some((x) => x.id == c.id); }
+  toggleFav(c) {
+    const f = this.saved.favs || [];
+    const favs = this.isFav(c) ? f.filter((x) => x.id != c.id) : [{ id: c.id, name: c.name, num: c.num, icon: c.icon }, ...f];
+    this.saved = { ...this.saved, favs }; try { localStorage.setItem(LS, JSON.stringify(this.saved)); } catch (e) {}
+    const g = this.groups.find((x) => x.id === FAV); if (g) g.count = favs.length;
+    this.toast(this.isFav(c) ? "Added to Favourites" : "Removed from Favourites", c.name);
+    if (this.group === FAV) this.chans = favs.slice();
+    this.renderGroups();
+  }
+  async doSearch() {
+    const q = this.$("cq").value.trim();
+    if (q.length < 2) { if (this.group != null) await this.loadChannels(this.group); else { this.chans = []; this.renderChannels(); } return; }
+    const my = (this.sq = (this.sq || 0) + 1);
+    try { const r = await this.json("/search?q=" + encodeURIComponent(q)); if (my !== this.sq) return; this.chans = r; this.searching = true; this.renderChannels(); } catch (e) { if (my === this.sq) this.$("chans").innerHTML = '<div class="empty">Search failed.</div>'; }
+  }
   renderChannels() {
-    const box = this.$("chans"); box.innerHTML = ""; this.$("ch").textContent = this.groupName() || "Channels";
+    const box = this.$("chans"); box.innerHTML = ""; this.$("ch").textContent = this.$("cq").value.trim().length >= 2 ? "Search results" : (this.groupName() || "Channels");
     if (!this.chans.length) box.innerHTML = '<div class="empty">Select a group on the left to see its channels.</div>';
-    this.chans.forEach((c) => box.append(this.row(`${c.icon ? `<img loading="lazy" src="${this.esc(c.icon)}" alt="">` : ""}<span class="n">${this.esc(c.num)}</span><span class="t">${this.esc(c.name)}</span>`, this.cur && this.cur.id == c.id ? "sel" : "", () => { this.closeMenu(); this.play(c); })));
+    this.chans.forEach((c) => {
+      const b = this.row(`${c.icon ? `<img loading="lazy" src="${this.esc(c.icon)}" alt="">` : ""}<span class="n">${this.esc(c.num)}</span><span class="t">${this.esc(c.name)}</span><span class="fav ${this.isFav(c) ? "on" : ""}" role="button" aria-label="Toggle favourite" title="Favourite (H)">${this.isFav(c) ? "♥" : "♡"}</span>`, this.cur && this.cur.id == c.id ? "sel" : "", () => { this.closeMenu(); this.play(c); });
+      b.querySelector(".fav").onclick = (e) => { e.stopPropagation(); this.toggleFav(c); this.renderChannels(); };
+      box.append(b);
+    });
   }
   openMenu() { this.menuOn = true; this.stage.classList.add("menu-on"); this.$("menu").classList.add("on"); this.stage.classList.remove("idle"); this.focusCol(this.chans.length ? "c" : "g"); }
   closeMenu() { this.menuOn = false; this.stage.classList.remove("menu-on"); this.$("menu").classList.remove("on"); this.stage.focus(); this.poke(); }
@@ -204,6 +233,12 @@ class HaIptvPlayer extends HTMLElement {
       case "down": return this.step(-1);
       case "left": case "vdn": v.volume = Math.max(0, v.volume - 0.1); v.muted = false; return this.toast("Volume " + Math.round(v.volume * 100) + "%");
       case "right": case "vup": v.volume = Math.min(1, v.volume + 0.1); v.muted = false; return this.toast("Volume " + Math.round(v.volume * 100) + "%");
+      case "fav": {
+        const a = this.shadowRoot.activeElement, rows = [...this.$("chans").querySelectorAll(".row")];
+        const c = this.menuOn && a && rows.includes(a) ? this.chans[rows.indexOf(a)] : this.cur;
+        if (c) { this.toggleFav(c); if (this.menuOn) this.renderChannels(); }
+        return;
+      }
       case "mute": v.muted = !v.muted; return this.toast(v.muted ? "Muted" : "Sound on");
       case "play": return v.paused ? v.play() : v.pause();
       case "ok": case "menu": return this.openMenu();
@@ -232,20 +267,22 @@ class HaIptvPlayer extends HTMLElement {
     else this.stage.requestFullscreen && this.stage.requestFullscreen().catch(() => {});
   }
   bind() {
-    const keymap = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right", Enter: "ok", Backspace: "back", Escape: "back", " ": "play", "+": "vup", "=": "vup", "-": "vdn", "]": "up", "[": "down", m: "mute", M: "mute", f: "full", F: "full", g: "menu", G: "menu" };
+    const keymap = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right", Enter: "ok", Backspace: "back", Escape: "back", " ": "play", "+": "vup", "=": "vup", "-": "vdn", "]": "up", "[": "down", m: "mute", M: "mute", f: "full", F: "full", g: "menu", G: "menu", h: "fav", H: "fav" };
     this._kd = (e) => {
       if (!this.isConnected || e.ctrlKey || e.metaKey || e.altKey) return;
-      const inq = this.shadowRoot.activeElement && this.shadowRoot.activeElement.id === "gq";
+      const inq = this.shadowRoot.activeElement && ["gq", "cq"].includes(this.shadowRoot.activeElement.id);
       if (inq && e.key !== "ArrowDown" && e.key !== "Escape" && e.key !== "Enter") return; // typing in the filter
       const k = keymap[e.key];
       if (!k) { if (this.menuOn && e.key.length === 1) this.$("gq").focus(); return; }
       if (e.key === "Escape" && !this.menuOn) return; // browser owns Esc for leaving full screen
       if (this.shadowRoot.activeElement && this.shadowRoot.activeElement.id === "gq" && e.key === "ArrowDown") { e.preventDefault(); return this.focusCol("g"); }
+      if (this.shadowRoot.activeElement && this.shadowRoot.activeElement.id === "cq" && e.key === "ArrowDown") { e.preventDefault(); return this.focusCol("c"); }
       if (this.shadowRoot.activeElement && this.shadowRoot.activeElement.tagName === "BUTTON" && !this.menuOn && e.key === "Enter" && this.shadowRoot.activeElement.closest(".remote,.fab")) return; // let a focused remote button act
       e.preventDefault(); this.poke(); this.press(k);
     };
     window.addEventListener("keydown", this._kd);
     this.$("gq").addEventListener("input", () => this.renderGroups());
+    this.$("cq").addEventListener("input", () => { clearTimeout(this.sT); this.sT = setTimeout(() => this.doSearch(), 300); });
     const wake = () => this.poke();
     this.stage.addEventListener("mousemove", wake); this.stage.addEventListener("touchstart", wake, { passive: true });
     this.stage.addEventListener("dblclick", (e) => { if (!e.target.closest(".remote,.fab,.menu")) this.fullscreen(); });
