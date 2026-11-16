@@ -1,4 +1,8 @@
 # Changelog
+## 0.5.1
+- App 0.9.1: **updates itself from the TV.** Shortly after start the app looks for a newer release on GitHub (at most every 6 hours). On the Home screen it offers "Install now / Later"; while a channel is playing it only shows a short banner. Settings has a "Software update" row to check and install by hand. The first time, Android asks you to allow "Install unknown apps" for HA IPTV and to confirm the install; after that it is one OK press.
+- App 0.9.1: the Live TV menu (regions, groups, channels) no longer shows the now-playing / programme bar at the bottom, so the lists have the full height.
+- Releases are signed with one fixed key (GitHub secret `IPTV_KEYSTORE_B64`), which Android requires to update an app in place.
 ## 0.5.0
 - **Encrypted pairing.** The TV's token no longer travels in the clear. Home Assistant and the TV each make a throw-away key (ECDH, P-256) and the token is sent AES-GCM encrypted. The 4-digit code now also covers both public keys, so someone sitting between the two (two different key exchanges) makes the screens show different digits. An old TV app without encryption is refused with a clear message: update the app on the TV (0.9) and the integration together.
 - App 0.9: Settings has a "Home Assistant" row (not paired / waiting / connected now / last contact N min ago), Settings scrolls when it has more rows than fit, and the Home screen can no longer end up with nothing focused (a D-pad press always lands on a tile).

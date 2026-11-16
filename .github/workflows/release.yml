@@ -25,7 +25,17 @@ jobs:
         with: { gradle-version: "8.9" }
       - name: Build the app
         working-directory: android
-        run: gradle --no-daemon -q :app:assembleDebug
+        env:
+          IPTV_KEYSTORE_B64: ${{ secrets.IPTV_KEYSTORE_B64 }}
+        run: |
+          # Same signing key every release, or the TV cannot update in place. See README "Self-update".
+          if [ -n "$IPTV_KEYSTORE_B64" ]; then
+            echo "$IPTV_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/iptv.keystore"
+            export IPTV_KEYSTORE="$RUNNER_TEMP/iptv.keystore"
+          else
+            echo "::warning::IPTV_KEYSTORE_B64 secret missing: this APK is signed with a throw-away key and cannot update an installed app"
+          fi
+          gradle --no-daemon -q :app:assembleDebug
       - name: Name the files
         run: |
           name=$(grep -o 'versionName = "[^"]*"' android/app/build.gradle.kts | cut -d'"' -f2)

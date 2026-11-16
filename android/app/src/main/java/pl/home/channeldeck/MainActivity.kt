@@ -107,6 +107,9 @@ class MainActivity : Activity() {
     private var vodLoading = false
     private lateinit var home: HomeView
     private var settingsPanel: SettingsPanel? = null
+    private lateinit var updater: Updater
+    private var updateOffered = false
+    private var updating = false
     private var splashAt = 0L
     private var hideJob: Job? = null
     private var bannerJob: Job? = null
@@ -152,6 +155,45 @@ class MainActivity : Activity() {
         advertise()
         startFlow()
         handleIntentCmd(intent)
+        updater = Updater(this)
+        scope.launch {   // quiet background check shortly after start; never interrupts playback
+            kotlinx.coroutines.delay(25_000)
+            if (updater.dueForAutoCheck()) try { updater.check()?.let { announceUpdate(it) } } catch (e: Exception) { }
+        }
+    }
+
+    // ---------------------------------------------------------------- self update
+    /** Found by the background check: ask on Home/Settings, otherwise only a short banner so a running channel is not covered. */
+    private fun announceUpdate(r: Updater.Release) {
+        if (updateOffered || updating) return
+        if ((::home.isInitialized && home.visibility == View.VISIBLE) || settingsPanel != null) offerUpdate(r)
+        else flashBanner("Update ${r.version} available  ·  Home > Settings > Software update")
+    }
+
+    private fun offerUpdate(r: Updater.Release) {
+        updateOffered = true
+        val notes = r.notes.lines().filter { it.isNotBlank() }.take(8).joinToString("\n") { it.replace("**", "") }.take(700)
+        android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("Update available: ${r.version}")
+            .setMessage("You have ${updater.installed}.\n\n$notes")
+            .setPositiveButton("Install now") { _, _ -> startUpdate(r) }
+            .setNegativeButton("Later", null)
+            .show()
+    }
+
+    private fun startUpdate(r: Updater.Release, status: (String) -> Unit = { flashBanner(it) }) {
+        if (updating) return
+        if (!updater.mayInstall()) { status("Allow “Install unknown apps” for HA IPTV on the screen that opened, press BACK, then try again"); return }
+        updating = true
+        scope.launch {
+            try {
+                status("Downloading ${r.version}…")
+                var shown = -10
+                val f = updater.download(r) { p -> if (p >= shown + 10) { shown = p; scope.launch { status("Downloading ${r.version}…  $p%") } } }
+                status("Installing ${r.version} – confirm on the screen that appears")
+                updater.install(f) { err -> scope.launch { updating = false; status(err ?: "Updated") } }
+            } catch (e: Exception) { updating = false; status("Update failed: ${e.message}") }
+        }
     }
 
     override fun onResume() { super.onResume(); resumed = true; changed() }
@@ -796,6 +838,7 @@ class MainActivity : Activity() {
         if (!dataReady) return
         focusLockUntil = android.os.SystemClock.uptimeMillis() + 700
         overlay.visibility = View.VISIBLE; infoPanel.visibility = View.GONE
+        detailPanel.visibility = View.GONE   // no now-playing / EPG bar under the regions, groups and channels lists
         refreshLists()   // picks up new ● Live entries
         playing?.let { if (it.groupId == browseGroup) bindDetail(it) }
         val gi = groupAdapter.items.indexOfFirst { it.id == browseGroup }.coerceAtLeast(0)
@@ -821,6 +864,7 @@ class MainActivity : Activity() {
         home.live.sub = if (dataReady) "${repo.groups.count { !Repo.pseudo(it.id) }} groups" else ""
         home.visibility = View.VISIBLE; home.alpha = 0f; home.animate().alpha(1f).setDuration(320).start()
         dismissSplash(); banner.bringToFront(); home.focusDefault(); changed()
+        if (::updater.isInitialized) updater.available?.let { announceUpdate(it) }
     }
     private fun openLive() {
         home.visibility = View.GONE
@@ -865,9 +909,26 @@ class MainActivity : Activity() {
         val haRow = NeonRow(this, "Home Assistant", haText())
         val pair = NeonRow(this, "Allow pairing again", "OK to let a Home Assistant pair with this TV for 5 minutes")
         pair.setOnClickListener { prefs.pairOpenUntil = System.currentTimeMillis() + 300_000; pair.set("Open for 5 minutes – now click Configure in Home Assistant") }
-        val about = NeonRow(this, "About", "HA IPTV is a player only. It provides no channels, playlists or content – you bring your own subscription.")
+        val build = try { @Suppress("DEPRECATION") packageManager.getPackageInfo(packageName, 0).versionCode } catch (e: Exception) { 0 }
+        val about = NeonRow(this, "About", "HA IPTV version ${updater.installed} (build $build)  ·  a player only. It provides no channels, playlists or content – you bring your own subscription.")
         about.valueTv.setSingleLine(false)
-        val panel = SettingsPanel(this, listOf(fmt, refresh, name, yieldRow, haRow, pair, api, about)) { }
+        val upd = NeonRow(this, "Software update", "Version ${updater.installed}  ·  OK to check for a new version")
+        upd.valueTv.setSingleLine(false)
+        upd.setOnClickListener {
+            if (updating) return@setOnClickListener
+            val known = updater.available
+            if (known != null) { startUpdate(known) { upd.set(it) }; return@setOnClickListener }
+            scope.launch {
+                upd.set("Checking…")
+                try {
+                    val r = updater.check()
+                    if (r == null) upd.set("Version ${updater.installed}  ·  up to date")
+                    else { upd.set("Version ${r.version} is available  ·  OK to download and install"); }
+                } catch (e: Exception) { upd.set("Could not check: ${e.message}") }
+            }
+        }
+        updater.available?.let { upd.set("Version ${it.version} is available  ·  OK to download and install") }
+        val panel = SettingsPanel(this, listOf(fmt, refresh, name, yieldRow, haRow, pair, upd, api, about)) { }
         settingsPanel = panel; root.addView(panel, FrameLayout.LayoutParams(-1, -1)); banner.bringToFront()
     }
     private fun closeSettings() { settingsPanel?.let { root.removeView(it) }; settingsPanel = null; home.settings.requestFocus() }

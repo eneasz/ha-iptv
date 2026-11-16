@@ -9,8 +9,13 @@ android {
         applicationId = "pl.home.channeldeck"
         minSdk = 22
         targetSdk = 34
-        versionCode = 12
-        versionName = "0.9.0"
+        versionCode = 13
+        versionName = "0.9.1"
+    }
+    // Self-update only works when every build is signed with the same key. CI passes the shared key through IPTV_KEYSTORE
+    // (the same file as ~/.android/debug.keystore on the build machine, so sticks installed from local builds keep updating).
+    System.getenv("IPTV_KEYSTORE")?.takeIf { File(it).isFile }?.let { ks ->
+        signingConfigs.getByName("debug") { storeFile = File(ks); storePassword = "android"; keyAlias = "androiddebugkey"; keyPassword = "android" }
     }
     buildTypes { release { isMinifyEnabled = false } }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
