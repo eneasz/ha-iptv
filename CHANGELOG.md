@@ -1,4 +1,8 @@
 # Changelog
+## 0.6.4
+- Player: **Left** opens the Regions / Groups menu and **Right** the channel list while playing, as on the stick (volume stays on + / - and the remote's volume buttons).
+- Player: a **Back** button in the menu, so the mouse can leave it.
+- Player UX review fixes: search fields no longer look focused at rest, a clearer white focus ring on rows, a darker backdrop behind the menu, larger and brighter favourite hearts, the Groups column hides when a region has a single group, and a phone layout with scrolling region and group chips.
 ## 0.6.3
 - Player: **Regions** column added, so the menu is Regions, Groups, Channels in the same order as on the stick. Group names lose their country prefix (like "PL|").
 - Favourites: the channel list is saved in Home Assistant whenever the group list loads and when you add or remove a favourite, so it opens even when the app isn't running. A clearer message appears when a list was never saved.

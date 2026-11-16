@@ -16,7 +16,8 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
 .spin{width:44px;height:44px;border-radius:50%;border:4px solid rgba(255,255,255,.2);border-top-color:var(--ring);animation:sp 1s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
 button{font:inherit;color:inherit;border:0;cursor:pointer}
-button:focus-visible,.row:focus-visible,input:focus-visible{outline:3px solid var(--ring);outline-offset:2px}
+button:focus-visible,input:focus-visible{outline:3px solid var(--ring);outline-offset:2px}
+.row:focus-visible{outline:2px solid #fff;outline-offset:0;box-shadow:0 0 0 5px rgba(42,107,255,.75);transform:scale(1.015);position:relative;z-index:1}
 .hot{position:absolute;right:0;bottom:0;width:140px;height:140px}
 .fab{display:flex;align-items:center;justify-content:center;position:absolute;right:16px;bottom:16px;width:48px;height:48px;border-radius:50%;background:rgba(12,18,48,.88);border:1px solid rgba(255,255,255,.28);box-shadow:0 4px 16px rgba(0,0,0,.5);backdrop-filter:blur(14px);font-size:22px;opacity:0;transition:opacity .4s}
 .fab.pinned{border-color:var(--blue);box-shadow:0 0 0 2px var(--blue),0 4px 16px rgba(0,0,0,.5)}
@@ -30,26 +31,36 @@ button:focus-visible,.row:focus-visible,input:focus-visible{outline:3px solid va
 .remote .ok{background:var(--blue);font-weight:600}
 .remote .cap{grid-column:1/-1;font-size:11px;letter-spacing:.06em;text-transform:uppercase;opacity:.75;text-align:center;margin:-2px 0}
 .remote button.on{background:rgba(255,200,60,.35)}
-.menu{position:absolute;inset:0;background:rgba(5,10,36,.78);backdrop-filter:blur(14px);display:none;padding:32px 40px;gap:24px}
-.menu.on{display:flex}
+.menu{position:absolute;inset:0;background:rgba(3,6,24,.88);backdrop-filter:blur(14px);display:none;padding:84px 40px 24px;gap:32px}
+.menu.on{display:flex;animation:mfade .18s ease-out}
+@keyframes mfade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .stage.menu-on .remote{display:none}
+.mback{position:absolute;right:24px;top:20px;z-index:2;display:flex;align-items:center;gap:8px;padding:10px 16px;min-height:44px;border-radius:22px;background:rgba(255,255,255,.12);font-size:16px}
+.mback:hover{background:rgba(255,255,255,.24)}
+.menu.one-group .col.g{display:none}
 .col{display:flex;flex-direction:column;min-width:0}
 .col.r{flex:0 0 17%}.col.g{flex:0 0 27%}.col.c{flex:1}
 .col h2{margin:0 0 10px;font-size:15px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;opacity:.7}
-.col input::placeholder{color:rgba(238,242,255,.62)}
-.col input{padding:12px 14px;border-radius:12px;border:2px solid #3552b8;background:#0f1a44;color:inherit;font-size:17px;margin-bottom:10px}
+.col input::placeholder{color:#a9b0cc}
+.col input{padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.07);color:inherit;font-size:17px;margin-bottom:10px}
+.col input:focus{border:2px solid var(--blue);outline:none}
 .list{overflow:auto;flex:1;padding:4px}
 .row{display:flex;align-items:center;gap:12px;width:100%;padding:11px 14px;border-radius:12px;background:transparent;text-align:left;font-size:19px;min-height:48px}
 .row:hover{background:#172863}
 .row.sel{background:#1a2a66;box-shadow:inset 4px 0 0 var(--blue)}
 .row img{width:34px;height:34px;object-fit:contain;border-radius:6px;background:#fff}
-.row .n{opacity:.6;font-size:15px;min-width:42px}
+.row .n{opacity:.7;font-size:15px;min-width:42px}
 .row .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.row .fav{opacity:.35;font-size:20px;padding:0 6px;cursor:pointer}.row .fav:hover,.row .fav.on{opacity:1;color:#ffcf40}
+.row .fav{opacity:.55;font-size:22px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center;cursor:pointer}.row .fav:hover,.row .fav.on{opacity:1;color:#ffcf40}
 .row .k{opacity:.6;font-size:15px}
 .empty{opacity:.7;padding:24px 16px;font-size:17px}
-.hint{color:#c4cce4;font-size:14px;padding:10px 4px 0}
-@media (max-width:760px){.menu{flex-direction:column;padding:16px}.col.r{flex:0 0 30%}.col.g{flex:0 0 30%}}
+.hint{color:#c4cce4;font-size:14px;padding:18px 4px 0;background:linear-gradient(transparent,rgba(3,6,24,.9) 40%)}
+@media (max-width:760px){.menu{flex-direction:column;padding:16px}.col.r,.col.g{flex:none}.col h2,.hint,#gq{display:none}
+  .col.r .list,.col.g .list{display:flex;flex:none;overflow-x:auto;overflow-y:hidden;gap:8px;padding:2px}
+  .col.r .row,.col.g .row{width:auto;flex:none;white-space:nowrap;min-height:44px;padding:8px 16px;border-radius:22px;background:rgba(255,255,255,.08)}
+  .col.r .row.sel,.col.g .row.sel{background:#1a2a66}
+  .mback{left:16px;right:auto;top:14px}.menu{padding:70px 16px 16px;gap:10px}
+  .row{min-height:56px}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 `;
 const tpl = `
@@ -58,12 +69,13 @@ const tpl = `
   <div class="toast" id="toast" role="status" aria-live="polite"></div><div class="tip" id="tip">Remote · hover here · F full screen · G channels</div>
   <div class="state" id="state"></div>
   <div class="menu" id="menu">
+    <button class="mback" id="mback" aria-label="Back to the video (Backspace)"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M20 11H7.8l4.6-4.6L11 5l-7 7 7 7 1.4-1.4L7.8 13H20z"/></svg><span>Back</span></button>
     <div class="col r"><h2>Regions</h2><div class="list" id="regions"></div></div>
     <div class="col g"><h2>Groups</h2><input id="gq" placeholder="Filter groups (type to search)" aria-label="Filter groups"><div class="list" id="groups"></div></div>
-    <div class="col c"><h2 id="ch">Channels</h2><input id="cq" placeholder="Search all channels (2+ letters)" aria-label="Search all channels"><div class="list" id="chans"></div><div class="hint">▲▼ browse · Enter plays · H favourite · Backspace closes</div></div>
+    <div class="col c"><h2 id="ch">Channels</h2><input id="cq" placeholder="Search channels" aria-label="Search all channels"><div class="list" id="chans"></div><div class="hint">▲▼ browse · Enter plays · H favourite · Backspace closes</div></div>
   </div>
   <div class="hot" id="hot">
-    <button class="fab" id="fab" aria-label="Remote control" aria-expanded="false"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm4 3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM9 11h6v2H9zm0 4h6v2H9z"/></svg></button>
+    <button class="fab" id="fab" aria-label="Remote control" aria-expanded="false"><svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor" aria-hidden="true"><path d="M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm4 3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM9 11h6v2H9zm0 4h6v2H9z"/></svg></button>
     <div class="remote" id="remote" role="group" aria-label="Remote control">
       <button data-k="menu" aria-label="Channel menu (G)" title="Channels (G)"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button><button data-k="up" aria-label="Channel up" title="Channel up">▲</button><button data-k="full" aria-label="Full screen (F)"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M5 5h5v2H7v3H5zm9 0h5v5h-2V7h-3zM5 14h2v3h3v2H5zm12 0h2v5h-5v-2h3z"/></svg></button>
       <button data-k="left" aria-label="Left">◀</button><button class="ok" data-k="ok" aria-label="OK">OK</button><button data-k="right" aria-label="Right">▶</button>
@@ -160,6 +172,7 @@ class HaIptvPlayer extends HTMLElement {
     this.region = rid; const gs = this.groupsIn(rid);
     this.group = rid === RECENT ? RECENT : gs.length ? gs[0].id : null;
     this.renderRegions(); this.renderGroups();
+    this.$("menu").classList.toggle("one-group", gs.length <= 1);
     if (this.group != null) await this.loadChannels(this.group); else { this.chans = []; this.renderChannels(); }
     if (focus) this.focusCol(this.group == null ? "r" : "c");
   }
@@ -237,7 +250,7 @@ class HaIptvPlayer extends HTMLElement {
       box.append(b);
     });
   }
-  openMenu() { this.menuOn = true; this.stage.classList.add("menu-on"); this.$("menu").classList.add("on"); this.stage.classList.remove("idle"); this.focusCol(this.chans.length ? "c" : "r"); }
+  openMenu(col) { this.menuOn = true; this.stage.classList.add("menu-on"); this.$("menu").classList.add("on"); this.stage.classList.remove("idle"); this.focusCol(col || (this.chans.length ? "c" : "r")); }
   closeMenu() { this.menuOn = false; this.stage.classList.remove("menu-on"); this.$("menu").classList.remove("on"); this.stage.focus(); this.poke(); }
   focusCol(col) {
     const rows = [...this.$(col === "r" ? "regions" : col === "g" ? "groups" : "chans").querySelectorAll(".row")];
@@ -252,8 +265,10 @@ class HaIptvPlayer extends HTMLElement {
     switch (k) {
       case "up": return this.step(1);
       case "down": return this.step(-1);
-      case "left": case "vdn": v.volume = Math.max(0, v.volume - 0.1); v.muted = false; return this.toast("Volume " + Math.round(v.volume * 100) + "%");
-      case "right": case "vup": v.volume = Math.min(1, v.volume + 0.1); v.muted = false; return this.toast("Volume " + Math.round(v.volume * 100) + "%");
+      case "left": return this.openMenu("r");  // like the stick: left opens the Regions / Groups menu
+      case "vdn": v.volume = Math.max(0, v.volume - 0.1); v.muted = false; return this.toast("Volume " + Math.round(v.volume * 100) + "%");
+      case "right": return this.openMenu("c");
+      case "vup": v.volume = Math.min(1, v.volume + 0.1); v.muted = false; return this.toast("Volume " + Math.round(v.volume * 100) + "%");
       case "fav": {
         const a = this.shadowRoot.activeElement, rows = [...this.$("chans").querySelectorAll(".row")];
         const c = this.menuOn && a && rows.includes(a) ? this.chans[rows.indexOf(a)] : this.cur;
@@ -303,6 +318,7 @@ class HaIptvPlayer extends HTMLElement {
       e.preventDefault(); this.poke(); this.press(k);
     };
     window.addEventListener("keydown", this._kd);
+    this.$("mback").addEventListener("click", () => this.closeMenu());
     this.$("gq").addEventListener("input", () => this.renderGroups());
     this.$("cq").addEventListener("input", () => { clearTimeout(this.sT); this.sT = setTimeout(() => this.doSearch(), 300); });
     const wake = () => this.poke();
