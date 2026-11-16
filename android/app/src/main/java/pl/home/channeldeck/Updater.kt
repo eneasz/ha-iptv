@@ -30,8 +30,8 @@ class Updater(private val ctx: Context) {
     /** A newer release found by the last check, if any. */
     @Volatile var available: Release? = null
 
-    /** Startup check is throttled so we are polite to the (rate limited) GitHub API: at most once every 6 hours. */
-    fun dueForAutoCheck() = System.currentTimeMillis() - sp.getLong("lastCheck", 0L) > 6 * 3600_000L
+    /** Startup check is throttled so we are polite to the (rate limited) GitHub API: at most once every 30 minutes. */
+    fun dueForAutoCheck() = System.currentTimeMillis() - sp.getLong("lastCheck", 0L) > 30 * 60_000L
 
     suspend fun check(): Release? = withContext(Dispatchers.IO) {
         val c = URL("https://api.github.com/repos/$REPO/releases/latest").openConnection() as HttpURLConnection

@@ -157,7 +157,7 @@ class MainActivity : Activity() {
         handleIntentCmd(intent)
         updater = Updater(this)
         scope.launch {   // quiet background check shortly after start; never interrupts playback
-            kotlinx.coroutines.delay(25_000)
+            kotlinx.coroutines.delay(10_000)
             if (updater.dueForAutoCheck()) try { updater.check()?.let { announceUpdate(it) } } catch (e: Exception) { }
         }
     }
@@ -194,6 +194,50 @@ class MainActivity : Activity() {
                 updater.install(f) { err -> scope.launch { updating = false; status(err ?: "Updated") } }
             } catch (e: Exception) { updating = false; status("Update failed: ${e.message}") }
         }
+    }
+
+    private var exitAsked = false
+    /** BACK on Home used to drop straight out to the launcher; ask first, with "Stay" focused so a double press does not leave. */
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun onBackPressed() {
+        if (::home.isInitialized && home.visibility == View.VISIBLE && settingsPanel == null) {
+            if (exitAsked) return
+            exitAsked = true
+            showExitDialog()
+        } else super.onBackPressed()
+    }
+
+    /** Exit confirmation in the app's own look: navy panel, yellow focus ring like Home, "Stay" focused so a double BACK never leaves. */
+    private fun showExitDialog() {
+        val dlg = android.app.Dialog(this, android.R.style.Theme_Translucent_NoTitleBar)
+        fun pill(label: String, onOk: () -> Unit): TextView = TextView(this).apply {
+            text = label; textSize = 20f; setTypeface(null, Typeface.BOLD); setTextColor(Neon.TEXT); gravity = Gravity.CENTER
+            isFocusable = true; isClickable = true; minWidth = dp(190); minHeight = dp(64); setPadding(dp(28), dp(14), dp(28), dp(14))
+            fun bg(focused: Boolean) = GradientDrawable().apply {
+                setColor(if (focused) Color.parseColor("#172863") else Color.parseColor("#0F1A44")); cornerRadius = dp(32).toFloat()
+                if (focused) setStroke(dp(4), Neon.YELLOW) else setStroke(dp(2), Neon.withAlpha(Neon.BLUE, 160))
+            }
+            background = bg(false)
+            setOnFocusChangeListener { v, f -> v.background = bg(f); v.animate().scaleX(if (f) 1.05f else 1f).scaleY(if (f) 1.05f else 1f).setDuration(120).start() }
+            setOnClickListener { onOk() }
+        }
+        val exit = pill("Exit") { dlg.dismiss(); finish() }
+        val stay = pill("Stay") { dlg.dismiss() }
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; clipChildren = false; clipToPadding = false; setPadding(dp(10), dp(8), dp(10), dp(8)) }
+        row.addView(exit, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(14) }); row.addView(stay)
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(dp(48), dp(36), dp(48), dp(36)); clipChildren = false; clipToPadding = false
+            background = GradientDrawable().apply { setColor(Color.parseColor("#F20F1A44")); cornerRadius = dp(28).toFloat(); setStroke(dp(2), Neon.withAlpha(Neon.BLUE, 170)) }
+        }
+        panel.addView(TextView(this).apply { text = "Exit HA IPTV?"; textSize = 28f; setTextColor(Neon.TEXT); typeface = Typeface.create("sans-serif-light", Typeface.NORMAL); gravity = Gravity.CENTER })
+        if (player?.isPlaying == true) panel.addView(TextView(this).apply { text = "Playback will stop."; textSize = 18f; setTextColor(Neon.MUTED); gravity = Gravity.CENTER; setPadding(0, dp(8), 0, 0) })
+        panel.addView(row, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(28) })
+        val scrim = FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#B3050A24")) }
+        scrim.addView(panel, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        dlg.setContentView(scrim)
+        dlg.setOnDismissListener { exitAsked = false }
+        dlg.show()
+        stay.requestFocus()
     }
 
     override fun onResume() { super.onResume(); resumed = true; changed() }
@@ -856,6 +900,7 @@ class MainActivity : Activity() {
     }
     private fun showHome() {
         hideOverlay(); infoPanel.visibility = View.GONE
+        if (::updater.isInitialized) updater.available?.let { r -> home.post { if (!updateOffered && !updating && ::home.isInitialized && home.visibility == View.VISIBLE) offerUpdate(r) } }   // found while a channel was playing: ask once the user is on Home
         player?.pause()
         val c = playing ?: repo.channel(prefs.lastChannel)
         home.setResume(c?.name, c?.let { groupName(it) }, c?.icon)

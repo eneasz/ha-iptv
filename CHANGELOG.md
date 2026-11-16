@@ -1,4 +1,7 @@
 # Changelog
+## 0.5.4
+- App 0.9.4: **BACK on Home now asks "Exit HA IPTV?"** (Exit / Stay, Stay is focused, a second BACK dismisses it), so a stray press no longer drops you to the Fire TV launcher. The dialog uses the app's own look.
+- Update check: runs 10 s after start (was 25 s) and at most every 30 minutes (was 6 hours). If the update was found while a channel was playing, you are asked as soon as you go back to Home.
 ## 0.5.3
 - App 0.9.3: Live TV menu fixes from the UX review. The Regions column is wider (regions 20 %, groups 27 %, channels 53 %), so "Favs" and other region names are no longer cut to "F…". Only the focused row has an outline now; the row you are on in another column is shown as a plain filled pill, so it is clear where the cursor is. Inside Favourites the per-row star is gone (every row is a favourite), which gives channel names more room. Counts and channel numbers are brighter.
 ## 0.5.2
