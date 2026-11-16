@@ -1,4 +1,7 @@
 # Changelog
+## 0.6.3
+- Player: **Regions** column added, so the menu is Regions, Groups, Channels in the same order as on the stick. Group names lose their country prefix (like "PL|").
+- Favourites: the channel list is saved in Home Assistant whenever the group list loads and when you add or remove a favourite, so it opens even when the app isn't running. A clearer message appears when a list was never saved.
 ## 0.6.2
 - Player: groups are in the same order as on the stick (no more alphabetical sort).
 - Player: there is one **Favourites** group now, the stick's own, with its channels. The heart (or H) adds and removes favourites on the stick, so they are shared with the TV app. This needs the app running on a stick.

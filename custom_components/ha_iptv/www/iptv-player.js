@@ -34,7 +34,7 @@ button:focus-visible,.row:focus-visible,input:focus-visible{outline:3px solid va
 .menu.on{display:flex}
 .stage.menu-on .remote{display:none}
 .col{display:flex;flex-direction:column;min-width:0}
-.col.g{flex:0 0 32%}.col.c{flex:1}
+.col.r{flex:0 0 17%}.col.g{flex:0 0 27%}.col.c{flex:1}
 .col h2{margin:0 0 10px;font-size:15px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;opacity:.7}
 .col input::placeholder{color:rgba(238,242,255,.62)}
 .col input{padding:12px 14px;border-radius:12px;border:2px solid #3552b8;background:#0f1a44;color:inherit;font-size:17px;margin-bottom:10px}
@@ -49,7 +49,7 @@ button:focus-visible,.row:focus-visible,input:focus-visible{outline:3px solid va
 .row .k{opacity:.6;font-size:15px}
 .empty{opacity:.7;padding:24px 16px;font-size:17px}
 .hint{color:#c4cce4;font-size:14px;padding:10px 4px 0}
-@media (max-width:760px){.menu{flex-direction:column;padding:16px}.col.g{flex:0 0 38%}}
+@media (max-width:760px){.menu{flex-direction:column;padding:16px}.col.r{flex:0 0 30%}.col.g{flex:0 0 30%}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 `;
 const tpl = `
@@ -58,6 +58,7 @@ const tpl = `
   <div class="toast" id="toast" role="status" aria-live="polite"></div><div class="tip" id="tip">Remote · hover here · F full screen · G channels</div>
   <div class="state" id="state"></div>
   <div class="menu" id="menu">
+    <div class="col r"><h2>Regions</h2><div class="list" id="regions"></div></div>
     <div class="col g"><h2>Groups</h2><input id="gq" placeholder="Filter groups (type to search)" aria-label="Filter groups"><div class="list" id="groups"></div></div>
     <div class="col c"><h2 id="ch">Channels</h2><input id="cq" placeholder="Search all channels (2+ letters)" aria-label="Search all channels"><div class="list" id="chans"></div><div class="hint">▲▼ browse · Enter plays · H favourite · Backspace closes</div></div>
   </div>
@@ -111,19 +112,20 @@ class HaIptvPlayer extends HTMLElement {
       const d = await this.json("/groups");
       // same order as on the stick; its Favourites group is used as is, "Recent" is local to this browser
       this.groups = (d.groups || []).filter((g) => g.id !== "__search");
-      this.groups.unshift({ id: RECENT, name: "★ Recent", count: (this.saved.recent || []).length });
+      this.regions = (d.regions || []).filter((x) => x.id !== "__search");
+      this.regions.unshift({ id: RECENT, name: "★ Recent", channels: (this.saved.recent || []).length });
     } catch (e) { this.setState("error", "Can't reach the HA IPTV integration (" + e.message + ")."); return; }
-    this.renderGroups(); this.renderChannels();
     const s = this.saved;
     if (s.group && s.id) {
-      this.group = s.group; await this.loadChannels(s.group);
+      this.group = s.group; this.region = this.regionOf(s.group); this.renderRegions(); this.renderGroups(); await this.loadChannels(s.group);
       const c = this.chans.find((x) => x.id == s.id);
       if (c) { this.play(c); return; }
     }
     // nothing to resume: open the menu with a group already loaded so the screen is never half-empty
-    const first = (this.saved.recent || []).length ? RECENT : (this.groups[1] || this.groups[0] || {}).id;
-    if (first != null) { this.group = first; await this.loadChannels(first); this.renderGroups(); }
-    this.setState(null); this.openMenu();
+    const firstRegion = (this.saved.recent || []).length ? RECENT : (this.regions[1] || this.regions[0] || {}).id;
+    this.setState(null);
+    if (firstRegion != null) await this.selectRegion(firstRegion, false); else { this.renderRegions(); this.renderGroups(); this.renderChannels(); }
+    this.openMenu();
   }
 
   // ---------------------------------------------------------------- playback
@@ -150,7 +152,21 @@ class HaIptvPlayer extends HTMLElement {
     const i = Math.max(0, this.chans.findIndex((x) => this.cur && x.id == this.cur.id));
     this.play(this.chans[(i + d + this.chans.length) % this.chans.length]);
   }
-  groupName() { const g = this.groups.find((x) => x.id == this.group); return g ? g.name : ""; }
+  groupName() { if (this.group === RECENT) return "★ Recent"; const g = this.groups.find((x) => x.id == this.group); return g ? this.short(g.name) : ""; }
+  short(n) { return n.includes("|") ? n.slice(n.indexOf("|") + 1).trim() || n : n; }
+  regionOf(gid) { if (gid === RECENT) return RECENT; const g = this.groups.find((x) => x.id == gid); return g ? (g.region || g.id) : null; }
+  groupsIn(rid) { return rid === RECENT ? [] : this.groups.filter((g) => (g.region || g.id) === rid); }
+  async selectRegion(rid, focus = true) {
+    this.region = rid; const gs = this.groupsIn(rid);
+    this.group = rid === RECENT ? RECENT : gs.length ? gs[0].id : null;
+    this.renderRegions(); this.renderGroups();
+    if (this.group != null) await this.loadChannels(this.group); else { this.chans = []; this.renderChannels(); }
+    if (focus) this.focusCol(this.group == null ? "r" : "c");
+  }
+  renderRegions() {
+    const box = this.$("regions"); box.innerHTML = "";
+    (this.regions || []).forEach((x) => box.append(this.row(`<span class="t">${this.esc(x.name)}</span><span class="k">${x.id === RECENT ? (this.saved.recent || []).length : x.channels != null ? x.channels : ""}</span>`, x.id == this.region ? "sel" : "", () => this.selectRegion(x.id))));
+  }
 
   // ---------------------------------------------------------------- UI helpers
   setState(kind, msg) {
@@ -180,16 +196,16 @@ class HaIptvPlayer extends HTMLElement {
   async loadChannels(gid) {
     this.$("chans").innerHTML = '<div class="empty">Loading…</div>';
     if (gid === RECENT) { this.chans = (this.saved.recent || []).slice(); this.renderChannels(); return; }
-    try { this.chans = await this.json("/channels/" + encodeURIComponent(gid)); this.noteFavs(this.chans); } catch (e) { this.chans = []; this.$("chans").innerHTML = '<div class="empty">Could not load channels.</div>'; return; }
+    try { this.chans = await this.json("/channels/" + encodeURIComponent(gid)); this.noteFavs(this.chans); } catch (e) { this.chans = []; this.$("chans").innerHTML = '<div class="empty">Could not load channels. Open the HA IPTV app on a stick once so Home Assistant can save this list.</div>'; return; }
     this.renderChannels();
   }
   row(html, cls, fn) { const b = document.createElement("button"); b.className = "row " + (cls || ""); b.innerHTML = html; b.onclick = fn; return b; }
   esc(s) { const d = document.createElement("div"); d.textContent = s == null ? "" : s; return d.innerHTML; }
   renderGroups() {
     const q = this.$("gq").value.trim().toLowerCase(), box = this.$("groups"); box.innerHTML = "";
-    const list = this.groups.filter((g) => !q || g.name.toLowerCase().includes(q));
-    if (!list.length) box.innerHTML = `<div class="empty">${q ? "No group matches." : "No channel groups loaded. Check that a stick is online and a region is selected in the app."}</div>`;
-    list.forEach((g) => box.append(this.row(`<span class="t">${this.esc(g.name)}</span><span class="k">${g.count}</span>`, g.id == this.group ? "sel" : "", async () => { this.group = g.id; this.renderGroups(); await this.loadChannels(g.id); this.focusCol("c"); })));
+    const list = this.groupsIn(this.region).filter((g) => !q || g.name.toLowerCase().includes(q));
+    if (!list.length) box.innerHTML = `<div class="empty">${q ? "No group matches." : !this.groups.length ? "No channel groups loaded. Check that a stick is online and a region is selected in the app." : this.region === RECENT ? "Your recent channels are on the right." : "No groups."}</div>`;
+    list.forEach((g) => box.append(this.row(`<span class="t">${this.esc(this.short(g.name))}</span><span class="k">${g.count}</span>`, g.id == this.group ? "sel" : "", async () => { this.group = g.id; this.renderGroups(); await this.loadChannels(g.id); this.focusCol("c"); })));
   }
   favIds = new Set();
   noteFavs(list) { (list || []).forEach((c) => { if (typeof c.fav === "boolean") c.fav ? this.favIds.add(String(c.id)) : this.favIds.delete(String(c.id)); }); }
@@ -201,10 +217,10 @@ class HaIptvPlayer extends HTMLElement {
       if (!r.ok) throw new Error(r.status);
     } catch (e) { return this.toast("Couldn't change favourites", "Open the HA IPTV app on a stick and try again"); }
     on ? this.favIds.add(String(c.id)) : this.favIds.delete(String(c.id));
-    const g = this.groups.find((x) => x.id === FAV); if (g) g.count += on ? 1 : -1;
+    const g = this.groups.find((x) => x.id === FAV); if (g) g.count += on ? 1 : -1; const rg = (this.regions || []).find((x) => x.id === FAV); if (rg) rg.channels += on ? 1 : -1;
     this.toast(on ? "Added to Favourites" : "Removed from Favourites", c.name);
     if (this.group === FAV && !on) this.chans = this.chans.filter((x) => x.id != c.id);
-    this.renderGroups(); if (this.menuOn) this.renderChannels();
+    this.renderRegions(); this.renderGroups(); if (this.menuOn) this.renderChannels();
   }
   async doSearch() {
     const q = this.$("cq").value.trim();
@@ -221,10 +237,10 @@ class HaIptvPlayer extends HTMLElement {
       box.append(b);
     });
   }
-  openMenu() { this.menuOn = true; this.stage.classList.add("menu-on"); this.$("menu").classList.add("on"); this.stage.classList.remove("idle"); this.focusCol(this.chans.length ? "c" : "g"); }
+  openMenu() { this.menuOn = true; this.stage.classList.add("menu-on"); this.$("menu").classList.add("on"); this.stage.classList.remove("idle"); this.focusCol(this.chans.length ? "c" : "r"); }
   closeMenu() { this.menuOn = false; this.stage.classList.remove("menu-on"); this.$("menu").classList.remove("on"); this.stage.focus(); this.poke(); }
   focusCol(col) {
-    const rows = [...this.$(col === "g" ? "groups" : "chans").querySelectorAll(".row")];
+    const rows = [...this.$(col === "r" ? "regions" : col === "g" ? "groups" : "chans").querySelectorAll(".row")];
     const t = rows.find((r) => r.classList.contains("sel")) || rows[0];
     if (t) { t.focus({ preventScroll: false }); t.scrollIntoView({ block: "nearest" }); }
   }
@@ -257,14 +273,15 @@ class HaIptvPlayer extends HTMLElement {
   }
   menuKey(k) {
     const a = this.shadowRoot.activeElement;
-    const inGroups = a && a.closest && a.closest("#groups"), inChans = a && a.closest && a.closest("#chans");
-    const rows = (inGroups ? this.$("groups") : this.$("chans")).querySelectorAll(".row");
+    const col = a && a.closest ? (a.closest("#regions") ? "regions" : a.closest("#groups") ? "groups" : "chans") : "chans";
+    const rows = this.$(col).querySelectorAll(".row");
     const i = [...rows].indexOf(a);
     if (k === "back" || k === "menu") return this.closeMenu();
     if (k === "full") return this.fullscreen();
     if (k === "up" || k === "down") { const n = rows[Math.max(0, Math.min(rows.length - 1, i + (k === "up" ? -1 : 1)))]; if (n) { n.focus(); n.scrollIntoView({ block: "nearest" }); } return; }
-    if (k === "left") return this.focusCol("g");
-    if (k === "right") return this.focusCol("c");
+    const hasG = () => this.$("groups").querySelector(".row");
+    if (k === "left") return this.focusCol(col === "chans" ? (hasG() ? "g" : "r") : "r");
+    if (k === "right") return this.focusCol(col === "regions" ? (hasG() ? "g" : "c") : "c");
     if (k === "ok" && a && a.click) a.click();
   }
   fullscreen() {

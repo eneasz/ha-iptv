@@ -219,6 +219,13 @@ class GroupsView(HomeAssistantView):
                 await c.async_refresh_catalog()
             if c.groups:
                 cached["groups"], cached["regions"] = c.groups, c.regions
+                # keep the favourites list too, so it still opens when no stick runs the app
+                if any(g.get("id") == "__fav" for g in c.groups):
+                    try:
+                        c._chan_cache.pop("__fav", None)
+                        cached.setdefault("channels", {})["__fav"] = await c.async_channels("__fav")
+                    except Exception:
+                        pass
                 self._cache.save()
                 return self.json({"groups": c.groups, "regions": c.regions})
         if cached.get("groups"):  # no stick runs the app right now: serve the last known catalogue
@@ -260,8 +267,8 @@ class FavView(HomeAssistantView):
     name = "api:ha_iptv:fav"
     requires_auth = True
 
-    def __init__(self, hass: HomeAssistant) -> None:
-        self._hass = hass
+    def __init__(self, hass: HomeAssistant, cache: Cache) -> None:
+        self._hass, self._cache = hass, cache
 
     async def post(self, request: web.Request) -> web.Response:
         try:
@@ -275,6 +282,13 @@ class FavView(HomeAssistantView):
         for c in sorted(sticks, key=lambda x: not getattr(x, "connected", False)):
             try:
                 await c.api.command(cmd="favourite", channel_id=cid, on=on)
+                try:  # refresh the stored favourites list
+                    c._chan_cache.pop("__fav", None)
+                    cache = await self._cache.load()
+                    cache.setdefault("channels", {})["__fav"] = await c.async_channels("__fav")
+                    self._cache.save()
+                except Exception:
+                    pass
                 return self.json({"ok": True, "fav": on})
             except Exception:  # app not running on this stick
                 continue
@@ -344,7 +358,7 @@ async def async_register_views(hass: HomeAssistant) -> None:
     hass.http.register_view(GroupsView(hass, cache))
     hass.http.register_view(ChannelsView(hass, cache))
     hass.http.register_view(SearchView(hass))
-    hass.http.register_view(FavView(hass))
+    hass.http.register_view(FavView(hass, cache))
     try:
         await _async_register_panel(hass)
     except Exception:  # never let the player panel stop the integration from loading
